@@ -22,24 +22,43 @@ export function setupSignaling(
   });
 
   io.on("connection", (socket: Socket) => {
-    socket.on("room:create", (callback?: (res: unknown) => void) => {
-      const result = rooms.createRoom(socket.id);
+    socket.on("room:create", (dataOrCb?: { pin?: string } | ((res: unknown) => void), callback?: (res: unknown) => void) => {
+      let data: { pin?: string } | undefined;
+      let cb: ((res: unknown) => void) | undefined;
+      if (typeof dataOrCb === "function") {
+        cb = dataOrCb;
+      } else {
+        data = dataOrCb;
+        cb = callback;
+      }
+
+      const pin = data?.pin;
+      if (pin !== undefined) {
+        if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) {
+          const err = { code: "INVALID_PAYLOAD", message: "PIN must be 4-8 digits" };
+          if (typeof cb === "function") return cb({ error: err });
+          socket.emit("error", err);
+          return;
+        }
+      }
+
+      const result = rooms.createRoom(socket.id, pin);
       if (!result.ok) {
         const errPayload = { code: result.code, message: result.message };
-        if (typeof callback === "function") return callback({ error: errPayload });
+        if (typeof cb === "function") return cb({ error: errPayload });
         socket.emit("error", errPayload);
         return;
       }
 
       socket.join(result.roomCode);
-      const payload = { roomCode: result.roomCode, peerId: result.peerId };
-      if (typeof callback === "function") return callback(payload);
+      const payload = { roomCode: result.roomCode, peerId: result.peerId, hasPin: result.hasPin };
+      if (typeof cb === "function") return cb(payload);
       socket.emit("room:created", payload);
     });
 
     socket.on(
       "room:join",
-      (data: { roomCode?: string }, callback?: (res: unknown) => void) => {
+      (data: { roomCode?: string; pin?: string }, callback?: (res: unknown) => void) => {
         if (!data?.roomCode || typeof data.roomCode !== "string") {
           const err = { code: "INVALID_PAYLOAD", message: "roomCode required" };
           if (typeof callback === "function") return callback({ error: err });
@@ -47,7 +66,14 @@ export function setupSignaling(
           return;
         }
 
-        const result = rooms.joinRoom(socket.id, data.roomCode);
+        if (data.pin !== undefined && (typeof data.pin !== "string" || !/^\d{4,8}$/.test(data.pin))) {
+          const err = { code: "INVALID_PAYLOAD", message: "PIN must be 4-8 digits" };
+          if (typeof callback === "function") return callback({ error: err });
+          socket.emit("error", err);
+          return;
+        }
+
+        const result = rooms.joinRoom(socket.id, data.roomCode, data.pin);
         if (!result.ok) {
           const errPayload = { code: result.code, message: result.message };
           if (typeof callback === "function") return callback({ error: errPayload });

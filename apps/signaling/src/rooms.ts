@@ -13,6 +13,7 @@ export interface Room {
   creatorPeerId: string;
   createdAt: number;
   lastActivityAt: number;
+  pinHash?: string;
 }
 
 export class RoomManager {
@@ -57,10 +58,11 @@ export class RoomManager {
     return expired;
   }
 
-  createRoom(socketId: string): {
+  createRoom(socketId: string, pin?: string): {
     ok: true;
     roomCode: string;
     peerId: string;
+    hasPin: boolean;
   } | { ok: false; code: string; message: string } {
     if (this.globalPeerCount >= this.config.maxGlobalPeers) {
       return {
@@ -83,16 +85,21 @@ export class RoomManager {
       lastActivityAt: now,
     };
 
+    if (pin) {
+      room.pinHash = this.hashPin(pin);
+    }
+
     this.rooms.set(roomCode, room);
     this.socketToRoom.set(socketId, { roomCode, peerId });
     this.globalPeerCount++;
 
-    return { ok: true, roomCode, peerId };
+    return { ok: true, roomCode, peerId, hasPin: !!pin };
   }
 
   joinRoom(
     socketId: string,
     roomCode: string,
+    pin?: string,
   ): {
     ok: true;
     peerId: string;
@@ -101,6 +108,12 @@ export class RoomManager {
     const room = this.rooms.get(roomCode);
     if (!room) {
       return { ok: false, code: "ROOM_NOT_FOUND", message: "Room not found" };
+    }
+
+    if (room.pinHash) {
+      if (!pin || this.hashPin(pin) !== room.pinHash) {
+        return { ok: false, code: "INVALID_PIN", message: "Incorrect room PIN" };
+      }
     }
 
     if (room.peers.size >= this.config.maxPeersPerRoom) {
@@ -187,6 +200,15 @@ export class RoomManager {
     if (room) {
       room.lastActivityAt = Date.now();
     }
+  }
+
+  roomHasPin(roomCode: string): boolean {
+    const room = this.rooms.get(roomCode);
+    return room ? !!room.pinHash : false;
+  }
+
+  private hashPin(pin: string): string {
+    return crypto.createHash("sha256").update(pin).digest("hex");
   }
 
   private generateRoomCode(): string {
