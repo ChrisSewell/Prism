@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
-import { ArrowRight, Shield, Zap, Globe } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowRight, Shield, Zap, Globe, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { checkWebRTCSupport } from "@/lib/compat";
 
@@ -13,6 +15,8 @@ export default function Landing() {
   const [roomCode, setRoomCode] = useState("");
   const [loading, setLoading] = useState<"create" | "join" | null>(null);
   const [supported, setSupported] = useState(true);
+  const [pinEnabled, setPinEnabled] = useState(false);
+  const [pin, setPin] = useState("");
 
   useEffect(() => {
     setSupported(checkWebRTCSupport());
@@ -23,13 +27,19 @@ export default function Landing() {
   }, [searchParams]);
 
   const handleCreate = () => {
-    navigate("/room?action=create");
+    const params = new URLSearchParams({ action: "create" });
+    if (pinEnabled && pin) {
+      params.set("pin", pin);
+    }
+    navigate(`/room?${params.toString()}`);
   };
 
   const handleJoin = () => {
     if (!roomCode.trim()) return;
     navigate(`/room?action=join&code=${roomCode.trim()}`);
   };
+
+  const isPinValid = !pinEnabled || /^\d{4,8}$/.test(pin);
 
   if (!supported) {
     return (
@@ -74,14 +84,62 @@ export default function Landing() {
 
           {/* Actions */}
           <div className="space-y-4">
-            <Button
-              onClick={handleCreate}
-              size="lg"
-              className="w-full gap-2 text-base"
-            >
-              Create Room
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+            <div className="space-y-3">
+              <Button
+                onClick={handleCreate}
+                size="lg"
+                className="w-full gap-2 text-base"
+                disabled={pinEnabled && !isPinValid}
+              >
+                Create Room
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+
+              <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/50 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Label htmlFor="pin-toggle" className="cursor-pointer text-sm text-muted-foreground">
+                    Require PIN to join
+                  </Label>
+                </div>
+                <Switch
+                  id="pin-toggle"
+                  checked={pinEnabled}
+                  onCheckedChange={(checked) => {
+                    setPinEnabled(checked);
+                    if (!checked) setPin("");
+                  }}
+                />
+              </div>
+
+              <AnimatePresence>
+                {pinEnabled && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="\d*"
+                      placeholder="Enter 4–8 digit PIN"
+                      value={pin}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, "").slice(0, 8);
+                        setPin(v);
+                      }}
+                      className="font-mono text-base tracking-widest"
+                      autoFocus
+                    />
+                    {pin.length > 0 && pin.length < 4 && (
+                      <p className="mt-1 text-xs text-destructive">PIN must be at least 4 digits</p>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             <div className="flex items-center gap-2">
               <div className="h-px flex-1 bg-border" />

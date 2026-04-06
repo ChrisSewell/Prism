@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useRoom } from "@/hooks/useRoom";
 import { RoomHeader } from "@/components/RoomHeader";
 import { PeerList } from "@/components/PeerList";
 import { FileDropZone } from "@/components/FileDropZone";
 import { TransferQueue } from "@/components/TransferQueue";
+import { PinDialog } from "@/components/PinDialog";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ const errorMessages: Record<string, string> = {
   ROOM_NOT_FOUND: "Room not found. It may have expired or the code is incorrect.",
   ROOM_FULL: "This room is full. Try again later.",
   GLOBAL_PEER_LIMIT: "Server is busy. Please try again later.",
+  INVALID_PIN: "Incorrect room PIN. Please try again.",
 };
 
 export default function Room() {
@@ -20,16 +22,43 @@ export default function Room() {
   const navigate = useNavigate();
   const { roomState, transfers, sigConnected, create, join, leave, sendFiles, cancelTransfer, retryPeer } = useRoom();
   const [initializing, setInitializing] = useState(true);
+  const [pinPrompt, setPinPrompt] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const pendingRoomCodeRef = useRef<string | null>(null);
+
+  const handlePinSubmit = useCallback(async (pin: string) => {
+    const code = pendingRoomCodeRef.current;
+    if (!code) return;
+    setPinError(null);
+    try {
+      await join(code, pin);
+      setPinPrompt(false);
+      window.history.replaceState({}, "", `/room?code=${code}`);
+    } catch (err: unknown) {
+      const error = err as { code?: string; message?: string };
+      if (error.code === "INVALID_PIN") {
+        setPinError("Incorrect PIN. Please try again.");
+      } else {
+        setPinPrompt(false);
+      }
+    }
+  }, [join]);
+
+  const handlePinCancel = useCallback(() => {
+    setPinPrompt(false);
+    pendingRoomCodeRef.current = null;
+    navigate("/");
+  }, [navigate]);
 
   useEffect(() => {
     const action = searchParams.get("action");
     const code = searchParams.get("code");
+    const pin = searchParams.get("pin") || undefined;
 
     const init = async () => {
       try {
         if (action === "create") {
-          const roomCode = await create();
-          // Update URL without navigation
+          const roomCode = await create(pin);
           window.history.replaceState({}, "", `/room?code=${roomCode}`);
         } else if (action === "join" && code) {
           await join(code);
@@ -40,8 +69,12 @@ export default function Room() {
           navigate("/");
           return;
         }
-      } catch {
-        // Error is already handled in the hook
+      } catch (err: unknown) {
+        const error = err as { code?: string };
+        if (error.code === "INVALID_PIN" && (code || searchParams.get("code"))) {
+          pendingRoomCodeRef.current = code || searchParams.get("code");
+          setPinPrompt(true);
+        }
       }
       setInitializing(false);
     };
@@ -55,6 +88,19 @@ export default function Room() {
     navigate("/");
   };
 
+  if (pinPrompt) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <PinDialog
+          open={pinPrompt}
+          onSubmit={handlePinSubmit}
+          onCancel={handlePinCancel}
+          error={pinError}
+        />
+      </div>
+    );
+  }
+
   if (initializing) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -66,7 +112,7 @@ export default function Room() {
     );
   }
 
-  if (roomState.error) {
+  if (roomState.error && roomState.error.code !== "INVALID_PIN") {
     const msg = errorMessages[roomState.error.code] || roomState.error.message;
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">

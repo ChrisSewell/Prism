@@ -24,6 +24,7 @@ export function disconnectSocket() {
 export interface CreateRoomResult {
   roomCode: string;
   peerId: string;
+  hasPin: boolean;
 }
 
 export interface JoinRoomResult {
@@ -32,25 +33,34 @@ export interface JoinRoomResult {
   selfPeerId: string;
 }
 
-export function createRoom(): Promise<CreateRoomResult> {
+export function createRoom(pin?: string): Promise<CreateRoomResult> {
   return new Promise((resolve, reject) => {
     const s = getSocket();
     if (!s.connected) s.connect();
-    s.emit("room:create", (response: CreateRoomResult & { error?: { code: string; message: string } }) => {
+    const cb = (response: CreateRoomResult & { error?: { code: string; message: string } }) => {
       if (response.error) {
         reject(response.error);
       } else {
         resolve(response);
       }
-    });
+    };
+    if (pin) {
+      s.emit("room:create", { pin }, cb);
+    } else {
+      s.emit("room:create", cb);
+    }
   });
 }
 
-export function joinRoom(roomCode: string): Promise<JoinRoomResult> {
+export function joinRoom(roomCode: string, pin?: string): Promise<JoinRoomResult> {
   return new Promise((resolve, reject) => {
     const s = getSocket();
     if (!s.connected) s.connect();
-    s.emit("room:join", { roomCode }, (response: JoinRoomResult & { error?: { code: string; message: string } }) => {
+    const payload: { roomCode: string; pin?: string } = { roomCode };
+    if (pin) {
+      payload.pin = pin;
+    }
+    s.emit("room:join", payload, (response: JoinRoomResult & { error?: { code: string; message: string } }) => {
       if (response.error) {
         reject(response.error);
       } else {

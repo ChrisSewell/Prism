@@ -205,14 +205,13 @@ export function useRoom() {
     });
   }, [setupPeerConnection]);
 
-  const create = useCallback(async () => {
+  const create = useCallback(async (pin?: string) => {
     try {
       iceServersRef.current = await fetchIceServers();
       setupSignaling();
       const socket = getSocket();
       if (!socket.connected) socket.connect();
       
-      // Wait for connection
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("Connection timeout")), 10000);
         if (socket.connected) { clearTimeout(timeout); resolve(); return; }
@@ -220,7 +219,7 @@ export function useRoom() {
         socket.once("connect_error", (err) => { clearTimeout(timeout); reject(err); });
       });
 
-      const result = await sigCreateRoom();
+      const result = await sigCreateRoom(pin);
       selfPeerIdRef.current = result.peerId;
       setRoomState((prev) => ({
         ...prev,
@@ -241,7 +240,7 @@ export function useRoom() {
     }
   }, [setupSignaling]);
 
-  const join = useCallback(async (roomCode: string) => {
+  const join = useCallback(async (roomCode: string, pin?: string) => {
     try {
       iceServersRef.current = await fetchIceServers();
       setupSignaling();
@@ -255,7 +254,7 @@ export function useRoom() {
         socket.once("connect_error", (err) => { clearTimeout(timeout); reject(err); });
       });
 
-      const result = await sigJoinRoom(roomCode);
+      const result = await sigJoinRoom(roomCode, pin);
       selfPeerIdRef.current = result.selfPeerId;
       setRoomState((prev) => ({
         ...prev,
@@ -265,7 +264,6 @@ export function useRoom() {
         error: null,
       }));
 
-      // Connect to existing peers
       for (const existingPeerId of result.peers) {
         const isImpolite = result.selfPeerId < existingPeerId;
         await setupPeerConnection(existingPeerId, isImpolite);

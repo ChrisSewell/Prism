@@ -17,6 +17,7 @@ export {
 } from "./validation.js";
 export type {
   SignalingEvent,
+  RoomCreatePayload,
   RoomCreatedPayload,
   RoomJoinPayload,
   PeerJoinedPayload,

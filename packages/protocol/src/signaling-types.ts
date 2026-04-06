@@ -14,13 +14,19 @@ export type SignalingEvent =
   | "signal:candidate"
   | "error";
 
+export interface RoomCreatePayload {
+  pin?: string;
+}
+
 export interface RoomCreatedPayload {
   roomCode: string;
   peerId: string;
+  hasPin: boolean;
 }
 
 export interface RoomJoinPayload {
   roomCode: string;
+  pin?: string;
 }
 
 export interface RosterPayload {
