@@ -1,0 +1,44 @@
+{
+  "name": "prism",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Prism — self-hosted peer-to-peer file sharing over WebRTC with mesh signaling",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/ChrisSewell/Prism.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ChrisSewell/Prism/issues"
+  },
+  "homepage": "https://github.com/ChrisSewell/Prism#readme",
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "file-transfer",
+    "file-sharing",
+    "self-hosted",
+    "mesh",
+    "signaling"
+  ],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "eslint . --ext .ts && npm run lint --workspace=apps/web",
+    "typecheck": "tsc --build",
+    "test": "npm run test --workspaces --if-present",
+    "test:security": "npm run test:security --workspaces --if-present",
+    "audit:check": "npm audit --audit-level=high"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.2.0",
+    "typescript-eslint": "^8.58.0"
+  }
+}

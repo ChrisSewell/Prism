@@ -1,0 +1,22 @@
+{
+  "name": "@prism/protocol",
+  "version": "1.0.0",
+  "description": "Shared types and binary framing codec for Prism (WebRTC file sharing)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run",
+    "test:security": "vitest run --reporter=verbose test/security",
+    "test:watch": "vitest watch"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

@@ -1,0 +1,20 @@
+# Replace yourdomain.com with your actual domain.
+# Caddy auto-provisions TLS via Let's Encrypt.
+
+yourdomain.com {
+    # Signaling API + WebSocket
+    reverse_proxy /socket.io/* signaling:3000
+    reverse_proxy /api/* signaling:3000
+    reverse_proxy /health signaling:3000
+    reverse_proxy /metrics signaling:3000
+
+    # Web UI (SPA)
+    reverse_proxy /* web:80
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data: blob:; frame-ancestors 'none'"
+    }
+}
