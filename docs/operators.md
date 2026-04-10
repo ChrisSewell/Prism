@@ -51,17 +51,35 @@ Two approaches for coturn authentication in a mesh:
 
 **Clock skew**: If using time-bounded TURN usernames, ensure the server has accurate time (NTP).
 
-## Firewall
+## STUN/TURN network configuration
 
-| Port | Protocol | Service |
-|------|----------|---------|
-| 80 | TCP | Caddy (HTTP redirect) |
-| 443 | TCP | Caddy (HTTPS + WSS) |
-| 3478 | UDP + TCP | coturn STUN/TURN |
-| 5349 | TCP | coturn TLS |
-| 49152–49200 | UDP | coturn relay range |
+`STUN_URLS` and `TURN_URLS` in `.env` **must use a publicly routable IP or hostname** — not a LAN address like `10.x.x.x` or `192.168.x.x`. External browsers need to reach these endpoints directly over UDP/TCP to discover server-reflexive candidates (STUN) or allocate relay paths (TURN). If you use a private IP, ICE gathering will fail silently and peer connections across networks will never complete.
 
-Only expose ports 80 and 443 publicly if using Caddy. coturn ports must be reachable by clients.
+To find your server's public IP: `curl -s ifconfig.me`
+
+### coturn `external-ip`
+
+The official coturn Docker image auto-detects the server's external IP on startup via `detect-external-ip`. Do **not** set `external-ip` in `turnserver.conf` when using the Docker image — it conflicts with the entrypoint's auto-detection and causes a `"cannot define external IP more than once"` error.
+
+If auto-detection fails (e.g., air-gapped network or incorrect result), override it by setting the `command` in `docker-compose.yml`:
+
+```yaml
+coturn:
+  image: coturn/coturn:latest
+  command: ["--external-ip=YOUR_PUBLIC_IP"]
+```
+
+### Firewall / port forwarding
+
+STUN/TURN traffic is UDP-based and cannot be routed through HTTP reverse proxies like Traefik, Caddy, or nginx. These ports must be forwarded **directly** from the public IP to the host running coturn, bypassing any HTTP proxy.
+
+| Port | Protocol | Service | Proxy? |
+|------|----------|---------|--------|
+| 80 | TCP | Caddy (HTTP redirect) | Via reverse proxy |
+| 443 | TCP | Caddy (HTTPS + WSS) | Via reverse proxy |
+| 3478 | UDP + TCP | coturn STUN/TURN | Direct — no proxy |
+| 5349 | TCP | coturn TLS | Direct — no proxy |
+| 49152–49200 | UDP | coturn relay range | Direct — no proxy |
 
 ## IPv6 / dual-stack
 
@@ -88,6 +106,24 @@ See `.env.example` for the full list with descriptions.
 | `ROOM_TTL_MS` | Idle room timeout | 3600000 (1 hour) |
 
 Mesh creates O(N²) connections for N peers. Memory and CPU scale accordingly. Run load tests (G7) before advertising high limits.
+
+## Debug logging
+
+Tagged console logs are emitted throughout the WebRTC connection lifecycle to aid troubleshooting:
+
+| Tag | Location | What it covers |
+|-----|----------|----------------|
+| `[signaling]` | Server (stdout) | Socket connect/disconnect, room create/join, signal relay with peer IDs |
+| `[signaling-client]` | Browser console | Socket creation, ICE server fetch, room create/join responses |
+| `[useRoom]` | Browser console | Peer setup, offer/answer flow, ICE candidate buffering/flushing, connection state changes |
+| `[webrtc]` | Browser console | RTCPeerConnection events, ICE candidate generation, data channel open/close |
+
+When debugging connection issues, filter the browser console by these tags. Key things to look for:
+
+- **No srflx/relay candidates** → STUN/TURN server unreachable (check firewall/port forwarding)
+- **Candidates buffered but never flushed** → offer/answer exchange failing
+- **`setRemoteDescription FAILED`** → SDP incompatibility or duplicate offers
+- **`iceConnectionState: failed`** → no working network path between peers (need TURN)
 
 ## Log retention
 
