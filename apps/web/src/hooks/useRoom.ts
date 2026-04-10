@@ -222,7 +222,25 @@ export function useRoom() {
           log(`onDataChannel(${label}): channel OPEN`);
           updatePeerState(peerId, { connectionState: "connected" });
         };
-        channel.onclose = () => log(`onDataChannel(${label}): channel CLOSED`);
+        channel.onclose = () => {
+          log(`onDataChannel(${label}): channel CLOSED`);
+          setTransfers((prev) =>
+            prev.map((t) =>
+              t.peerId === peerId &&
+              t.direction === "receiving" &&
+              (t.status === "transferring" || t.status === "pending")
+                ? { ...t, status: "failed" }
+                : t,
+            ),
+          );
+          const p = peersRef.current.get(peerId);
+          if (p?.incomingTransfers) {
+            for (const transfer of p.incomingTransfers.values()) {
+              transfer.chunks = undefined;
+            }
+            p.incomingTransfers.clear();
+          }
+        };
         channel.onerror = (e) => warn(`onDataChannel(${label}): channel ERROR`, e);
         channel.onmessage = (e) => {
           const peer = peersRef.current.get(peerId);
@@ -297,7 +315,25 @@ export function useRoom() {
           log(`dc.onopen(${label}): offerer data channel OPEN`);
           updatePeerState(peerId, { connectionState: "connected" });
         };
-        dc.onclose = () => log(`dc.onclose(${label}): offerer data channel CLOSED`);
+        dc.onclose = () => {
+          log(`dc.onclose(${label}): offerer data channel CLOSED`);
+          setTransfers((prev) =>
+            prev.map((t) =>
+              t.peerId === peerId &&
+              t.direction === "receiving" &&
+              (t.status === "transferring" || t.status === "pending")
+                ? { ...t, status: "failed" }
+                : t,
+            ),
+          );
+          const p = peersRef.current.get(peerId);
+          if (p?.incomingTransfers) {
+            for (const transfer of p.incomingTransfers.values()) {
+              transfer.chunks = undefined;
+            }
+            p.incomingTransfers.clear();
+          }
+        };
         dc.onerror = (e) => warn(`dc.onerror(${label}): offerer data channel ERROR`, e);
         dc.onmessage = (e) => {
           const peer = peersRef.current.get(peerId);
@@ -364,6 +400,30 @@ export function useRoom() {
       if (peer) {
         peer.peerConnection?.close();
         peer.connectionState = "disconnected";
+
+        for (const [fileId, ac] of abortControllersRef.current) {
+          const t = transfersRef.current.find(
+            (tr) => tr.fileId === fileId && tr.peerId === peerId,
+          );
+          if (t && (t.status === "transferring" || t.status === "pending")) {
+            ac.abort();
+          }
+        }
+
+        setTransfers((prev) =>
+          prev.map((t) =>
+            t.peerId === peerId &&
+            (t.status === "transferring" || t.status === "pending")
+              ? { ...t, status: "failed" }
+              : t,
+          ),
+        );
+
+        for (const transfer of peer.incomingTransfers.values()) {
+          transfer.chunks = undefined;
+        }
+        peer.incomingTransfers.clear();
+
         setRoomState((prev) => ({ ...prev, peers: new Map(peersRef.current) }));
         setTimeout(() => {
           peersRef.current.delete(peerId);

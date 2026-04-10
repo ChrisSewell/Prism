@@ -124,11 +124,20 @@ export async function sendFile(
         const chunkData = value.subarray(pos, pos + CHUNK_SIZE);
 
         if (dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
-          await new Promise<void>((resolve) => {
-            dc.onbufferedamountlow = () => {
+          await new Promise<void>((resolve, reject) => {
+            const cleanup = () => {
               dc.onbufferedamountlow = null;
-              resolve();
+              dc.removeEventListener("close", onClose);
+              dc.removeEventListener("error", onError);
+              abortSignal.removeEventListener("abort", onAbort);
             };
+            const onClose = () => { cleanup(); reject(new Error("Data channel closed")); };
+            const onError = () => { cleanup(); reject(new Error("Data channel error")); };
+            const onAbort = () => { cleanup(); resolve(); };
+            dc.onbufferedamountlow = () => { cleanup(); resolve(); };
+            dc.addEventListener("close", onClose);
+            dc.addEventListener("error", onError);
+            abortSignal.addEventListener("abort", onAbort);
           });
         }
 

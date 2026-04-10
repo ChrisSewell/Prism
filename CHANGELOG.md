@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Optimized RTCPeerConnection config**: Added `iceCandidatePoolSize: 2` to pre-allocate gathering resources (srflx candidates are ready faster) and `bundlePolicy: "max-bundle"` to reduce the number of NAT bindings needed.
 - **Diversified default STUN servers**: Fallback ICE config now includes Google and Cloudflare STUN endpoints (consolidated into a single `urls` array) so clients behind symmetric NATs gather more reflexive candidates from different vantage points.
-- **`retryPeer` re-fetches ICE servers**: Manual peer retry now calls `/api/ice` for fresh TURN credentials and server config before creating a new PeerConnection, instead of reusing stale config from room-join time.
+- `**retryPeer` re-fetches ICE servers**: Manual peer retry now calls `/api/ice` for fresh TURN credentials and server config before creating a new PeerConnection, instead of reusing stale config from room-join time.
 - **Delayed relay detection**: Connection type (P2P vs relayed) is now checked 3 seconds after connecting, with a second check at 8 seconds, giving ICE time to settle on the optimal candidate pair instead of snapshotting a transient relay state.
 
 ## [1.2.0] - 2026-04-10
@@ -33,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **`getRandomValues` 65 KiB limit**: Protocol test helper switched from `getRandomValues` to `randomFillSync` to support the new 256 KiB chunk payloads that exceed the Web Crypto API hard cap.
+- `**getRandomValues` 65 KiB limit**: Protocol test helper switched from `getRandomValues` to `randomFillSync` to support the new 256 KiB chunk payloads that exceed the Web Crypto API hard cap.
 
 ## [1.1.0] - 2026-04-10
 
@@ -42,15 +42,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Optional PIN access control for rooms**: Room creators can set a 4–8 digit PIN that joiners must enter before being admitted. PINs are SHA-256 hashed server-side, validated on both client and server, and surfaced via a modal dialog on join.
 - **Optional display names**: Peers can set a username before creating/joining a room, or edit it in-room. Names are relayed via the signaling server and displayed in the peer list and room header. Anonymous peers fall back to a truncated peer ID.
 - **Browser-local persistence**: Display names are saved in `localStorage` and auto-filled on return visits. Names are never stored on the server.
-- **`peer:update-name` signaling event**: New event allows peers to change their display name after joining. Changes are broadcast to all room members in real time.
+- `**peer:update-name` signaling event**: New event allows peers to change their display name after joining. Changes are broadcast to all room members in real time.
 - **Self entry in peer list**: The local user now appears in the peer list with a "(you)" badge and inline name editing.
 - **Nginx reverse proxy for signaling**: The web container's nginx config now proxies `/socket.io/`, `/api/`, and `/health` to the signaling container, enabling single-port deployments without Caddy.
 
 ### Changed
 
 - **Roster payload**: `peers` in the roster response is now `Array<{ peerId, username? }>` instead of `string[]`.
-- **`peer:joined` payload**: Now includes `username?` alongside `peerId`.
-- **`RoomCreatePayload` / `RoomJoinPayload`**: Accept optional `username` and `pin` fields.
+- `**peer:joined` payload**: Now includes `username?` alongside `peerId`.
+- `**RoomCreatePayload` / `RoomJoinPayload`**: Accept optional `username` and `pin` fields.
 
 ## [1.0.1] - 2026-04-10
 
@@ -81,4 +81,3 @@ Initial release.
 - Docker Compose deployment with Caddy TLS reverse proxy
 - Security hardening: Helmet, CORS, rate limiting, non-root containers
 - Versioned binary framing protocol (`@prism/protocol`)
-
