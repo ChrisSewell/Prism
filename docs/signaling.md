@@ -116,7 +116,7 @@ Returns ICE server configuration:
 }
 ```
 
-If no `STUN_URLS` or `TURN_URLS` are configured, the response will contain an empty `iceServers` array. The web client detects this and falls back to public Google STUN servers (`stun:stun.l.google.com:19302`, `stun:stun1.l.google.com:19302`) so that peer connections can still establish server-reflexive candidates. For production deployments, always configure STUN/TURN with a publicly routable address — see [operators.md](operators.md).
+If no `STUN_URLS` or `TURN_URLS` are configured, the response will contain an empty `iceServers` array. The web client detects this and falls back to public STUN servers from Google and Cloudflare so that peer connections can still establish server-reflexive candidates. For production deployments, always configure STUN/TURN with a publicly routable address and include diverse STUN providers for better NAT traversal — see [operators.md](operators.md).
 
 ### `GET /metrics` (optional)
 

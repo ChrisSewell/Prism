@@ -35,19 +35,27 @@ async function detectRelayType(pc: RTCPeerConnection): Promise<RelayType> {
 
     if (!localCandidateId || !remoteCandidateId) return "unknown";
 
-    let localType: string | undefined;
-    let remoteType: string | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let localCandidate: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let remoteCandidate: any;
 
     stats.forEach((report) => {
       if (report.type === "local-candidate" && report.id === localCandidateId) {
-        localType = report.candidateType;
+        localCandidate = report;
       }
       if (report.type === "remote-candidate" && report.id === remoteCandidateId) {
-        remoteType = report.candidateType;
+        remoteCandidate = report;
       }
     });
 
-    log(`detectRelayType: local=${localType}, remote=${remoteType}`);
+    const localType = localCandidate?.candidateType;
+    const remoteType = remoteCandidate?.candidateType;
+
+    log(
+      `detectRelayType: local=[type=${localType}, protocol=${localCandidate?.protocol}, address=${localCandidate?.address}:${localCandidate?.port}]` +
+      ` remote=[type=${remoteType}, protocol=${remoteCandidate?.protocol}, address=${remoteCandidate?.address}:${remoteCandidate?.port}]`,
+    );
 
     if (localType === "relay" || remoteType === "relay") return "relayed";
     if (localType && remoteType) return "direct";
@@ -55,6 +63,32 @@ async function detectRelayType(pc: RTCPeerConnection): Promise<RelayType> {
   } catch (e) {
     warn("detectRelayType: getStats() failed", e);
     return "unknown";
+  }
+}
+
+async function logIceDiagnostics(pc: RTCPeerConnection, label: string): Promise<void> {
+  try {
+    const stats = await pc.getStats();
+    const candidates: string[] = [];
+    const pairs: string[] = [];
+
+    stats.forEach((report) => {
+      if (report.type === "local-candidate") {
+        candidates.push(`  LOCAL  ${report.candidateType} ${report.protocol ?? "?"} ${report.address ?? "?"}:${report.port ?? "?"}`);
+      }
+      if (report.type === "remote-candidate") {
+        candidates.push(`  REMOTE ${report.candidateType} ${report.protocol ?? "?"} ${report.address ?? "?"}:${report.port ?? "?"}`);
+      }
+      if (report.type === "candidate-pair") {
+        pairs.push(`  pair state=${report.state} nominated=${report.nominated} local=${report.localCandidateId} remote=${report.remoteCandidateId}`);
+      }
+    });
+
+    warn(`ICE diagnostics(${label}): ${candidates.length} candidates, ${pairs.length} pairs`);
+    for (const c of candidates) warn(c);
+    for (const p of pairs) warn(p);
+  } catch (e) {
+    warn(`ICE diagnostics(${label}): getStats() failed`, e);
   }
 }
 
@@ -75,6 +109,7 @@ export function useRoom() {
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const remoteDescriptionSetRef = useRef<Set<string>>(new Set());
+  const iceRestartAttemptedRef = useRef<Set<string>>(new Set());
 
   const updatePeerState = useCallback((peerId: string, updates: Partial<PeerState>) => {
     const peer = peersRef.current.get(peerId);
@@ -156,6 +191,7 @@ export function useRoom() {
         log(`onConnectionStateChange(${label}): raw="${state}" mapped="${mapped}"`);
         updatePeerState(peerId, { connectionState: mapped });
         if (mapped === "connected") {
+          iceRestartAttemptedRef.current.delete(peerId);
           toast.success(`Connected to peer ${getPeerLabel(peerId)}`);
           const peer = peersRef.current.get(peerId);
           if (peer?.peerConnection) {
@@ -195,7 +231,11 @@ export function useRoom() {
         };
       };
 
-      const pc = createPeerConnection(iceServersRef.current, onIceCandidate, onConnectionStateChange, onDataChannel);
+      const onIceCandidateError = (evt: RTCPeerConnectionIceErrorEvent) => {
+        warn(`onIceCandidateError(${label}): url=${evt.url} code=${evt.errorCode} text=${evt.errorText}`);
+      };
+
+      const pc = createPeerConnection(iceServersRef.current, onIceCandidate, onConnectionStateChange, onDataChannel, onIceCandidateError);
       log(`setupPeerConnection(${label}): RTCPeerConnection created, iceServers=${JSON.stringify(iceServersRef.current.map(s => s.urls))}`);
 
       pc.onicegatheringstatechange = () => {
@@ -203,6 +243,29 @@ export function useRoom() {
       };
       pc.oniceconnectionstatechange = () => {
         log(`iceConnectionState(${label}): ${pc.iceConnectionState}`);
+        if (pc.iceConnectionState === "failed") {
+          logIceDiagnostics(pc, label);
+          const selfId = selfPeerIdRef.current!;
+          const shouldInitiateRestart = selfId < peerId;
+          if (shouldInitiateRestart && !iceRestartAttemptedRef.current.has(peerId)) {
+            iceRestartAttemptedRef.current.add(peerId);
+            log(`iceConnectionState(${label}): attempting ICE restart (first attempt)`);
+            pc.createOffer({ iceRestart: true }).then(async (offer) => {
+              await pc.setLocalDescription(offer);
+              remoteDescriptionSetRef.current.delete(peerId);
+              pendingCandidatesRef.current.delete(peerId);
+              socket.emit("signal:offer", {
+                toPeerId: peerId,
+                data: { sdp: offer.sdp, type: offer.type },
+              });
+              log(`iceConnectionState(${label}): ICE restart offer emitted`);
+            }).catch((e) => {
+              warn(`iceConnectionState(${label}): ICE restart failed`, e);
+            });
+          } else if (shouldInitiateRestart) {
+            log(`iceConnectionState(${label}): ICE restart already attempted, manual retry needed`);
+          }
+        }
       };
       pc.onsignalingstatechange = () => {
         log(`signalingState(${label}): ${pc.signalingState}`);
@@ -290,6 +353,7 @@ export function useRoom() {
       toast(`${displayName} left`);
       pendingCandidatesRef.current.delete(peerId);
       remoteDescriptionSetRef.current.delete(peerId);
+      iceRestartAttemptedRef.current.delete(peerId);
       const peer = peersRef.current.get(peerId);
       if (peer) {
         peer.peerConnection?.close();
@@ -497,6 +561,7 @@ export function useRoom() {
     abortControllersRef.current.clear();
     pendingCandidatesRef.current.clear();
     remoteDescriptionSetRef.current.clear();
+    iceRestartAttemptedRef.current.clear();
     disconnectSocket();
     setRoomState({
       roomCode: null,
@@ -570,7 +635,7 @@ export function useRoom() {
 
   const retryPeer = useCallback(
     async (peerId: string) => {
-      log(`retryPeer(${peerId.substring(0, 6)}): retrying`);
+      log(`retryPeer(${peerId.substring(0, 6)}): retrying with fresh ICE servers`);
       const peer = peersRef.current.get(peerId);
       if (peer) {
         peer.peerConnection?.close();
@@ -578,6 +643,13 @@ export function useRoom() {
       }
       pendingCandidatesRef.current.delete(peerId);
       remoteDescriptionSetRef.current.delete(peerId);
+      iceRestartAttemptedRef.current.delete(peerId);
+      try {
+        iceServersRef.current = await fetchIceServers();
+        log(`retryPeer(${peerId.substring(0, 6)}): refreshed ICE servers: ${JSON.stringify(iceServersRef.current.map(s => s.urls))}`);
+      } catch (e) {
+        warn(`retryPeer(${peerId.substring(0, 6)}): failed to refresh ICE servers, using cached`, e);
+      }
       const selfId = selfPeerIdRef.current!;
       const isImpolite = selfId < peerId;
       await setupPeerConnection(peerId, isImpolite);

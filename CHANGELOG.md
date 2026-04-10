@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-04-10
+
+### Added
+
+- **Automatic ICE restart on failure**: When `iceConnectionState` transitions to `"failed"`, the offerer automatically attempts one ICE restart (`createOffer({ iceRestart: true })`) to re-gather candidates and retry connectivity checks without tearing down the PeerConnection. If the restart also fails, falls back to the existing manual retry path.
+- **ICE diagnostics logging**: On connection failure, all gathered ICE candidates and candidate-pair states are dumped to the console for debugging. On success, the selected candidate pair's full details (type, protocol, address, port) are logged alongside the relay/P2P detection.
+- **ICE candidate error visibility**: `icecandidateerror` events are now logged with the failing URL, error code, and error text, surfacing STUN/TURN reachability issues in the browser console.
+
+### Changed
+
+- **Optimized RTCPeerConnection config**: Added `iceCandidatePoolSize: 2` to pre-allocate gathering resources (srflx candidates are ready faster) and `bundlePolicy: "max-bundle"` to reduce the number of NAT bindings needed.
+- **Diversified default STUN servers**: Fallback ICE config now includes Google and Cloudflare STUN endpoints (consolidated into a single `urls` array) so clients behind symmetric NATs gather more reflexive candidates from different vantage points.
+- **`retryPeer` re-fetches ICE servers**: Manual peer retry now calls `/api/ice` for fresh TURN credentials and server config before creating a new PeerConnection, instead of reusing stale config from room-join time.
+
 ## [1.2.0] - 2026-04-10
 
 ### Added
