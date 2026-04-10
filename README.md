@@ -100,6 +100,7 @@ Copy `.env.example` to `.env` and configure:
 | `ROOM_TTL_MS` | Room idle timeout (ms) | `3600000` |
 | `TURN_URLS` | TURN server URL(s) | — |
 | `TURN_SECRET` | coturn shared secret | — |
+| `VITE_DEBUG_ENABLED` | Show ICE debug panel in the UI (build-time) | `false` |
 
 See `.env.example` for the full list.
 

@@ -12,7 +12,9 @@ COPY packages/protocol/ packages/protocol/
 COPY apps/web/ apps/web/
 
 ARG VITE_SIGNALING_URL=""
+ARG VITE_DEBUG_ENABLED=""
 ENV VITE_SIGNALING_URL=$VITE_SIGNALING_URL
+ENV VITE_DEBUG_ENABLED=$VITE_DEBUG_ENABLED
 
 RUN npm run build --workspace=apps/web
 

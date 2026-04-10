@@ -6,6 +6,8 @@ import { PeerList } from "@/components/PeerList";
 import { FileDropZone } from "@/components/FileDropZone";
 import { TransferQueue } from "@/components/TransferQueue";
 import { PinDialog } from "@/components/PinDialog";
+import { DebugPanel } from "@/components/DebugPanel";
+import { DEBUG_ENABLED } from "@/lib/config";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,7 @@ const errorMessages: Record<string, string> = {
 export default function Room() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { roomState, transfers, sigConnected, create, join, leave, changeUsername, sendFiles, cancelTransfer, retryPeer } = useRoom();
+  const { roomState, transfers, sigConnected, create, join, leave, changeUsername, sendFiles, cancelTransfer, retryPeer, getDebugInfo } = useRoom();
   const [initializing, setInitializing] = useState(true);
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
@@ -174,6 +176,10 @@ export default function Room() {
           </motion.div>
         </div>
       </div>
+
+      {DEBUG_ENABLED && (
+        <DebugPanel getDebugInfo={getDebugInfo} selfPeerId={roomState.selfPeerId} />
+      )}
     </div>
   );
 }
