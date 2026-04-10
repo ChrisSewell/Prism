@@ -94,7 +94,7 @@ describe("G1 — codec round-trip", () => {
 
   it("round-trips chunk at MAX_CHUNK_PAYLOAD size", () => {
     const payload = new Uint8Array(MAX_CHUNK_PAYLOAD);
-    crypto.getRandomValues(payload);
+    crypto.randomFillSync(payload);
     const frame: ChunkFrame = { type: "chunk", fileId, offset: 0, payload };
     const encoded = encodeFrame(frame);
     const decoded = decodeFrame(encoded) as ChunkFrame;
