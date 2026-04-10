@@ -23,11 +23,15 @@ Unknown major versions are rejected with a connection error.
 
 ### `room:create`
 
-Create a new room. Callback receives `{ roomCode, peerId }` or `{ error: { code, message } }`.
+Create a new room. Payload (optional): `{ pin?: string, username?: string }`. Callback receives `{ roomCode, peerId, hasPin }` or `{ error: { code, message } }`.
 
 ### `room:join`
 
-Join an existing room. Payload: `{ roomCode: string }`. Callback receives `{ roomCode, peers: string[], selfPeerId }` or `{ error: { code, message } }`.
+Join an existing room. Payload: `{ roomCode: string, pin?: string, username?: string }`. Callback receives `{ roomCode, peers: Array<{ peerId, username? }>, selfPeerId }` or `{ error: { code, message } }`.
+
+### `peer:update-name`
+
+Update the local peer's display name while in a room. Payload: `{ username?: string }`. Send an empty string or omit `username` to clear. Server broadcasts the change to all other peers in the room.
 
 ### `signal:offer` / `signal:answer` / `signal:candidate`
 
@@ -49,15 +53,19 @@ Emitted if no callback provided. Payload: `{ roomCode, peerId }`.
 
 ### `room:roster`
 
-Full peer list on join. Payload: `{ roomCode, peers: string[], selfPeerId }`.
+Full peer list on join. Payload: `{ roomCode, peers: Array<{ peerId, username? }>, selfPeerId }`.
 
 ### `peer:joined`
 
-New peer entered the room. Payload: `{ peerId }`.
+New peer entered the room. Payload: `{ peerId, username? }`.
 
 ### `peer:left`
 
 Peer disconnected. Payload: `{ peerId }`. Client should close RTCPeerConnection to that peer and abort in-flight transfers.
+
+### `peer:update-name`
+
+A peer changed their display name. Payload: `{ peerId, username? }`. `username` is omitted when the peer clears their name.
 
 ### `signal:offer` / `signal:answer` / `signal:candidate`
 

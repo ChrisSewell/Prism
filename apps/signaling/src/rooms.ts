@@ -1,10 +1,18 @@
 import crypto from "node:crypto";
 import type { Config } from "./config.js";
 
+const MAX_USERNAME_LENGTH = 30;
+
+function sanitizeUsername(raw?: string): string {
+  if (!raw || typeof raw !== "string") return "";
+  return raw.trim().slice(0, MAX_USERNAME_LENGTH);
+}
+
 export interface Peer {
   peerId: string;
   socketId: string;
   joinedAt: number;
+  username?: string;
 }
 
 export interface Room {
@@ -58,7 +66,7 @@ export class RoomManager {
     return expired;
   }
 
-  createRoom(socketId: string, pin?: string): {
+  createRoom(socketId: string, pin?: string, username?: string): {
     ok: true;
     roomCode: string;
     peerId: string;
@@ -75,8 +83,9 @@ export class RoomManager {
     const roomCode = this.generateRoomCode();
     const peerId = crypto.randomUUID();
     const now = Date.now();
+    const sanitized = sanitizeUsername(username);
 
-    const peer: Peer = { peerId, socketId, joinedAt: now };
+    const peer: Peer = { peerId, socketId, joinedAt: now, username: sanitized || undefined };
     const room: Room = {
       code: roomCode,
       peers: new Map([[peerId, peer]]),
@@ -100,10 +109,12 @@ export class RoomManager {
     socketId: string,
     roomCode: string,
     pin?: string,
+    username?: string,
   ): {
     ok: true;
     peerId: string;
-    existingPeers: string[];
+    username?: string;
+    existingPeers: Array<{ peerId: string; username?: string }>;
   } | { ok: false; code: string; message: string } {
     const room = this.rooms.get(roomCode);
     if (!room) {
@@ -129,15 +140,19 @@ export class RoomManager {
     }
 
     const peerId = crypto.randomUUID();
-    const peer: Peer = { peerId, socketId, joinedAt: Date.now() };
-    const existingPeers = Array.from(room.peers.keys());
+    const sanitized = sanitizeUsername(username);
+    const peer: Peer = { peerId, socketId, joinedAt: Date.now(), username: sanitized || undefined };
+    const existingPeers = Array.from(room.peers.values()).map((p) => ({
+      peerId: p.peerId,
+      username: p.username,
+    }));
 
     room.peers.set(peerId, peer);
     room.lastActivityAt = Date.now();
     this.socketToRoom.set(socketId, { roomCode, peerId });
     this.globalPeerCount++;
 
-    return { ok: true, peerId, existingPeers };
+    return { ok: true, peerId, username: sanitized || undefined, existingPeers };
   }
 
   removePeer(socketId: string): {
@@ -200,6 +215,30 @@ export class RoomManager {
     if (room) {
       room.lastActivityAt = Date.now();
     }
+  }
+
+  updatePeerName(socketId: string, username?: string): {
+    ok: true;
+    roomCode: string;
+    peerId: string;
+    username?: string;
+  } | { ok: false; code: string; message: string } {
+    const mapping = this.socketToRoom.get(socketId);
+    if (!mapping) {
+      return { ok: false, code: "NOT_IN_ROOM", message: "You are not in a room" };
+    }
+    const room = this.rooms.get(mapping.roomCode);
+    if (!room) {
+      return { ok: false, code: "NOT_IN_ROOM", message: "You are not in a room" };
+    }
+    const peer = room.peers.get(mapping.peerId);
+    if (!peer) {
+      return { ok: false, code: "NOT_IN_ROOM", message: "You are not in a room" };
+    }
+    const sanitized = sanitizeUsername(username);
+    peer.username = sanitized || undefined;
+    room.lastActivityAt = Date.now();
+    return { ok: true, roomCode: mapping.roomCode, peerId: mapping.peerId, username: peer.username };
   }
 
   roomHasPin(roomCode: string): boolean {

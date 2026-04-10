@@ -20,7 +20,7 @@ const errorMessages: Record<string, string> = {
 export default function Room() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { roomState, transfers, sigConnected, create, join, leave, sendFiles, cancelTransfer, retryPeer } = useRoom();
+  const { roomState, transfers, sigConnected, create, join, leave, changeUsername, sendFiles, cancelTransfer, retryPeer } = useRoom();
   const [initializing, setInitializing] = useState(true);
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
@@ -30,8 +30,9 @@ export default function Room() {
     const code = pendingRoomCodeRef.current;
     if (!code) return;
     setPinError(null);
+    const username = searchParams.get("username") || undefined;
     try {
-      await join(code, pin);
+      await join(code, pin, username);
       setPinPrompt(false);
       window.history.replaceState({}, "", `/room?code=${code}`);
     } catch (err: unknown) {
@@ -54,17 +55,18 @@ export default function Room() {
     const action = searchParams.get("action");
     const code = searchParams.get("code");
     const pin = searchParams.get("pin") || undefined;
+    const username = searchParams.get("username") || undefined;
 
     const init = async () => {
       try {
         if (action === "create") {
-          const roomCode = await create(pin);
+          const roomCode = await create(pin, username);
           window.history.replaceState({}, "", `/room?code=${roomCode}`);
         } else if (action === "join" && code) {
-          await join(code);
+          await join(code, undefined, username);
           window.history.replaceState({}, "", `/room?code=${code}`);
         } else if (code) {
-          await join(code);
+          await join(code, undefined, username);
         } else {
           navigate("/");
           return;
@@ -136,8 +138,11 @@ export default function Room() {
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
           <RoomHeader
             roomCode={roomState.roomCode}
+            selfPeerId={roomState.selfPeerId}
+            selfUsername={roomState.selfUsername ?? undefined}
             sigConnected={sigConnected}
             onLeave={handleLeave}
+            onChangeUsername={changeUsername}
           />
         </motion.div>
 
@@ -149,7 +154,13 @@ export default function Room() {
 
         <div className="grid gap-4 md:grid-cols-[280px_1fr]">
           <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }}>
-            <PeerList peers={roomState.peers} onRetry={retryPeer} />
+            <PeerList
+              peers={roomState.peers}
+              selfPeerId={roomState.selfPeerId}
+              selfUsername={roomState.selfUsername ?? undefined}
+              onRetry={retryPeer}
+              onChangeUsername={changeUsername}
+            />
           </motion.div>
 
           <motion.div

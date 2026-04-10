@@ -9,6 +9,7 @@ export type SignalingEvent =
   | "peer:joined"
   | "peer:left"
   | "peer:kicked"
+  | "peer:update-name"
   | "signal:offer"
   | "signal:answer"
   | "signal:candidate"
@@ -16,6 +17,7 @@ export type SignalingEvent =
 
 export interface RoomCreatePayload {
   pin?: string;
+  username?: string;
 }
 
 export interface RoomCreatedPayload {
@@ -27,16 +29,28 @@ export interface RoomCreatedPayload {
 export interface RoomJoinPayload {
   roomCode: string;
   pin?: string;
+  username?: string;
+}
+
+export interface RosterPeer {
+  peerId: string;
+  username?: string;
 }
 
 export interface RosterPayload {
   roomCode: string;
-  peers: string[];
+  peers: RosterPeer[];
   selfPeerId: string;
 }
 
 export interface PeerJoinedPayload {
   peerId: string;
+  username?: string;
+}
+
+export interface PeerUpdateNamePayload {
+  peerId: string;
+  username?: string;
 }
 
 export interface PeerLeftPayload {

@@ -37,15 +37,15 @@ export interface CreateRoomResult {
 
 export interface JoinRoomResult {
   roomCode: string;
-  peers: string[];
+  peers: Array<{ peerId: string; username?: string }>;
   selfPeerId: string;
 }
 
-export function createRoom(pin?: string): Promise<CreateRoomResult> {
+export function createRoom(pin?: string, username?: string): Promise<CreateRoomResult> {
   return new Promise((resolve, reject) => {
     const s = getSocket();
     if (!s.connected) s.connect();
-    log("createRoom: emitting room:create, pin=", pin ? "yes" : "no");
+    log("createRoom: emitting room:create, pin=", pin ? "yes" : "no", "username=", username ?? "(none)");
     const cb = (response: CreateRoomResult & { error?: { code: string; message: string } }) => {
       if (response.error) {
         warn("createRoom: server returned error", response.error);
@@ -55,33 +55,45 @@ export function createRoom(pin?: string): Promise<CreateRoomResult> {
         resolve(response);
       }
     };
-    if (pin) {
-      s.emit("room:create", { pin }, cb);
+    const payload: { pin?: string; username?: string } = {};
+    if (pin) payload.pin = pin;
+    if (username) payload.username = username;
+    if (Object.keys(payload).length > 0) {
+      s.emit("room:create", payload, cb);
     } else {
       s.emit("room:create", cb);
     }
   });
 }
 
-export function joinRoom(roomCode: string, pin?: string): Promise<JoinRoomResult> {
+export function joinRoom(roomCode: string, pin?: string, username?: string): Promise<JoinRoomResult> {
   return new Promise((resolve, reject) => {
     const s = getSocket();
     if (!s.connected) s.connect();
-    const payload: { roomCode: string; pin?: string } = { roomCode };
-    if (pin) {
-      payload.pin = pin;
-    }
-    log("joinRoom: emitting room:join, roomCode=", roomCode, "pin=", pin ? "yes" : "no");
+    const payload: { roomCode: string; pin?: string; username?: string } = { roomCode };
+    if (pin) payload.pin = pin;
+    if (username) payload.username = username;
+    log("joinRoom: emitting room:join, roomCode=", roomCode, "pin=", pin ? "yes" : "no", "username=", username ?? "(none)");
     s.emit("room:join", payload, (response: JoinRoomResult & { error?: { code: string; message: string } }) => {
       if (response.error) {
         warn("joinRoom: server returned error", response.error);
         reject(response.error);
       } else {
-        log("joinRoom: success, selfPeerId=", response.selfPeerId.substring(0, 6), "peers=", response.peers.map(p => p.substring(0, 6)));
+        log("joinRoom: success, selfPeerId=", response.selfPeerId.substring(0, 6), "peers=", response.peers.map(p => p.peerId.substring(0, 6)));
         resolve(response);
       }
     });
   });
+}
+
+export function updateUsername(username: string): void {
+  const s = getSocket();
+  if (!s.connected) {
+    warn("updateUsername: socket not connected");
+    return;
+  }
+  log("updateUsername: emitting peer:update-name, username=", username || "(clear)");
+  s.emit("peer:update-name", { username: username || undefined });
 }
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
