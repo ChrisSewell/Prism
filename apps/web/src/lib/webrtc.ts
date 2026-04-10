@@ -50,7 +50,7 @@ function setupDataChannel(dc: RTCDataChannel) {
 }
 
 const PROGRESS_THROTTLE_MS = 150;
-const YIELD_INTERVAL_CHUNKS = 8;
+const YIELD_INTERVAL_CHUNKS = 64;
 
 function yieldToMainThread(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -198,7 +198,11 @@ export function handleIncomingFrame(
       if (!transfer) return;
       transfer.chunks!.push(new Uint8Array(data));
       transfer.bytesTransferred += data.byteLength;
-      onTransferUpdate(fileId, { ...transfer });
+      const now = Date.now();
+      if (!transfer.lastProgressTime || now - transfer.lastProgressTime >= PROGRESS_THROTTLE_MS) {
+        transfer.lastProgressTime = now;
+        onTransferUpdate(fileId, { ...transfer });
+      }
       break;
     }
     case FrameType.FILE_END: {

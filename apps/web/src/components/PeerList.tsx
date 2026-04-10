@@ -155,7 +155,7 @@ export function PeerList({ peers, selfPeerId, selfUsername, onRetry, onChangeUse
                     </span>
                   )}
                 </div>
-                <StatusBadge state={peer.connectionState} />
+                <StatusBadge state={peer.connectionState} relayType={peer.relayType} />
               </div>
               {peer.connectionState === "failed" && (
                 <Button

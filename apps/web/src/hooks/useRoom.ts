@@ -1,11 +1,62 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
-import type { PeerState, PeerConnectionState, TransferState, RoomState } from "@/lib/types";
+import type { PeerState, PeerConnectionState, RelayType, TransferState, RoomState } from "@/lib/types";
 import { getSocket, disconnectSocket, createRoom as sigCreateRoom, joinRoom as sigJoinRoom, fetchIceServers, updateUsername as sigUpdateUsername } from "@/lib/signaling";
 import { createPeerConnection, createDataChannel, sendFile, handleIncomingFrame } from "@/lib/webrtc";
 
 const log = (...args: unknown[]) => console.log("[useRoom]", ...args);
 const warn = (...args: unknown[]) => console.warn("[useRoom]", ...args);
+
+async function detectRelayType(pc: RTCPeerConnection): Promise<RelayType> {
+  try {
+    const stats = await pc.getStats();
+    let activePairId: string | undefined;
+
+    stats.forEach((report) => {
+      if (report.type === "transport" && report.selectedCandidatePairId) {
+        activePairId = report.selectedCandidatePairId;
+      }
+    });
+
+    let localCandidateId: string | undefined;
+    let remoteCandidateId: string | undefined;
+
+    stats.forEach((report) => {
+      if (report.type === "candidate-pair") {
+        const isActive = activePairId
+          ? report.id === activePairId
+          : report.state === "succeeded" && report.nominated;
+        if (isActive) {
+          localCandidateId = report.localCandidateId;
+          remoteCandidateId = report.remoteCandidateId;
+        }
+      }
+    });
+
+    if (!localCandidateId || !remoteCandidateId) return "unknown";
+
+    let localType: string | undefined;
+    let remoteType: string | undefined;
+
+    stats.forEach((report) => {
+      if (report.type === "local-candidate" && report.id === localCandidateId) {
+        localType = report.candidateType;
+      }
+      if (report.type === "remote-candidate" && report.id === remoteCandidateId) {
+        remoteType = report.candidateType;
+      }
+    });
+
+    log(`detectRelayType: local=${localType}, remote=${remoteType}`);
+
+    if (localType === "relay" || remoteType === "relay") return "relayed";
+    if (localType && remoteType) return "direct";
+    return "unknown";
+  } catch (e) {
+    warn("detectRelayType: getStats() failed", e);
+    return "unknown";
+  }
+}
 
 export function useRoom() {
   const [roomState, setRoomState] = useState<RoomState>({
@@ -106,6 +157,17 @@ export function useRoom() {
         updatePeerState(peerId, { connectionState: mapped });
         if (mapped === "connected") {
           toast.success(`Connected to peer ${getPeerLabel(peerId)}`);
+          const peer = peersRef.current.get(peerId);
+          if (peer?.peerConnection) {
+            detectRelayType(peer.peerConnection).then((relayType) => {
+              updatePeerState(peerId, { relayType });
+              if (relayType === "relayed") {
+                toast.warning(
+                  `Connection to ${getPeerLabel(peerId)} is relayed through a server — transfer speeds may be reduced`,
+                );
+              }
+            });
+          }
         } else if (mapped === "failed") {
           toast.error(`Connection to peer ${getPeerLabel(peerId)} failed`);
         }
