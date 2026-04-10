@@ -1,9 +1,12 @@
 export type PeerConnectionState = "connecting" | "connected" | "failed" | "disconnected";
 
+export type RelayType = "direct" | "relayed" | "unknown";
+
 export interface PeerState {
   peerId: string;
   username?: string;
   connectionState: PeerConnectionState;
+  relayType?: RelayType;
   peerConnection: RTCPeerConnection | null;
   dataChannel: RTCDataChannel | null;
   outgoingTransfers: Map<string, TransferState>;
