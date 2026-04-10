@@ -4,10 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-04-10
+
+### Added
+
+- **Relay vs direct (P2P) connection indicator**: Each peer's status badge now shows whether the connection is direct P2P or relayed through a TURN server, detected via `getStats()` ICE candidate-pair inspection. Relayed connections trigger a warning toast and an info tooltip explaining potential speed impact.
+
+### Changed
+
+- **Transfer throughput optimization**: Chunk size increased from 64 KiB to 256 KiB, send buffer from 1 MiB to 16 MiB, and yield interval from 8 to 64 chunks to reduce per-message overhead and saturate the SCTP send queue. Receiver-side React state updates are now throttled to 150 ms intervals instead of every chunk, eliminating ~49K unnecessary re-renders on large transfers.
+
+### Fixed
+
+- **`getRandomValues` 65 KiB limit**: Protocol test helper switched from `getRandomValues` to `randomFillSync` to support the new 256 KiB chunk payloads that exceed the Web Crypto API hard cap.
+
 ## [1.1.0] - 2026-04-10
 
 ### Added
 
+- **Optional PIN access control for rooms**: Room creators can set a 4–8 digit PIN that joiners must enter before being admitted. PINs are SHA-256 hashed server-side, validated on both client and server, and surfaced via a modal dialog on join.
 - **Optional display names**: Peers can set a username before creating/joining a room, or edit it in-room. Names are relayed via the signaling server and displayed in the peer list and room header. Anonymous peers fall back to a truncated peer ID.
 - **Browser-local persistence**: Display names are saved in `localStorage` and auto-filled on return visits. Names are never stored on the server.
 - **`peer:update-name` signaling event**: New event allows peers to change their display name after joining. Changes are broadcast to all room members in real time.
@@ -18,7 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Roster payload**: `peers` in the roster response is now `Array<{ peerId, username? }>` instead of `string[]`.
 - **`peer:joined` payload**: Now includes `username?` alongside `peerId`.
-- **`RoomCreatePayload` / `RoomJoinPayload`**: Accept optional `username` field.
+- **`RoomCreatePayload` / `RoomJoinPayload`**: Accept optional `username` and `pin` fields.
 
 ## [1.0.1] - 2026-04-10
 
@@ -31,10 +46,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Connection debug logging**: Tagged console logging (`[useRoom]`, `[webrtc]`, `[signaling-client]`, `[signaling]`) across the full WebRTC connection lifecycle — ICE gathering, offer/answer exchange, candidate buffering, connection state transitions, and signaling relay. Helps diagnose connectivity issues in browser DevTools and server logs.
+- **Prism-branded favicon**: Replaced the default favicon with a custom Prism SVG icon.
 
 ### Changed
 
 - **STUN/TURN URLs must use a publicly routable address**: Updated `.env.example` and operator docs to clarify that `STUN_URLS` and `TURN_URLS` must be set to a public IP or hostname reachable by external clients, not a LAN IP.
+- **Theme applied before mount**: Stored dark/light theme preference is now applied synchronously before React mounts, preventing a flash of unstyled content on error and loading routes.
 
 ## [1.0.0] - 2026-04-06
 
