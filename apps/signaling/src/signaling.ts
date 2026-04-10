@@ -29,8 +29,8 @@ export function setupSignaling(
   io.on("connection", (socket: Socket) => {
     log(`connection: socket=${socket.id} connected`);
 
-    socket.on("room:create", (dataOrCb?: { pin?: string } | ((res: unknown) => void), callback?: (res: unknown) => void) => {
-      let data: { pin?: string } | undefined;
+    socket.on("room:create", (dataOrCb?: { pin?: string; username?: string } | ((res: unknown) => void), callback?: (res: unknown) => void) => {
+      let data: { pin?: string; username?: string } | undefined;
       let cb: ((res: unknown) => void) | undefined;
       if (typeof dataOrCb === "function") {
         cb = dataOrCb;
@@ -40,7 +40,8 @@ export function setupSignaling(
       }
 
       const pin = data?.pin;
-      log(`room:create: socket=${socket.id} pin=${pin ? "yes" : "no"}`);
+      const username = data?.username;
+      log(`room:create: socket=${socket.id} pin=${pin ? "yes" : "no"} username=${username ?? "(none)"}`);
 
       if (pin !== undefined) {
         if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)) {
@@ -52,7 +53,7 @@ export function setupSignaling(
         }
       }
 
-      const result = rooms.createRoom(socket.id, pin);
+      const result = rooms.createRoom(socket.id, pin, username);
       if (!result.ok) {
         warn(`room:create: FAILED for socket=${socket.id}, code=${result.code}, message=${result.message}`);
         const errPayload = { code: result.code, message: result.message };
@@ -70,8 +71,8 @@ export function setupSignaling(
 
     socket.on(
       "room:join",
-      (data: { roomCode?: string; pin?: string }, callback?: (res: unknown) => void) => {
-        log(`room:join: socket=${socket.id} roomCode=${data?.roomCode} pin=${data?.pin ? "yes" : "no"}`);
+      (data: { roomCode?: string; pin?: string; username?: string }, callback?: (res: unknown) => void) => {
+        log(`room:join: socket=${socket.id} roomCode=${data?.roomCode} pin=${data?.pin ? "yes" : "no"} username=${data?.username ?? "(none)"}`);
 
         if (!data?.roomCode || typeof data.roomCode !== "string") {
           const err = { code: "INVALID_PAYLOAD", message: "roomCode required" };
@@ -89,7 +90,7 @@ export function setupSignaling(
           return;
         }
 
-        const result = rooms.joinRoom(socket.id, data.roomCode, data.pin);
+        const result = rooms.joinRoom(socket.id, data.roomCode, data.pin, data.username);
         if (!result.ok) {
           warn(`room:join: FAILED for socket=${socket.id}, code=${result.code}, message=${result.message}`);
           const errPayload = { code: result.code, message: result.message };
@@ -99,7 +100,7 @@ export function setupSignaling(
         }
 
         socket.join(data.roomCode);
-        log(`room:join: SUCCESS socket=${socket.id} roomCode=${data.roomCode} peerId=${result.peerId.substring(0, 6)} existingPeers=[${result.existingPeers.map((p: string) => p.substring(0, 6)).join(", ")}]`);
+        log(`room:join: SUCCESS socket=${socket.id} roomCode=${data.roomCode} peerId=${result.peerId.substring(0, 6)} existingPeers=[${result.existingPeers.map((p) => p.peerId.substring(0, 6)).join(", ")}]`);
 
         const rosterPayload = {
           roomCode: data.roomCode,
@@ -111,6 +112,7 @@ export function setupSignaling(
 
         socket.to(data.roomCode).emit("peer:joined", {
           peerId: result.peerId,
+          username: result.username,
         });
         log(`room:join: emitted peer:joined to room ${data.roomCode} for peerId=${result.peerId.substring(0, 6)}`);
       },
@@ -139,6 +141,24 @@ export function setupSignaling(
         relaySignal(socket, rooms, "signal:candidate", data);
       },
     );
+
+    socket.on("peer:update-name", (data: { username?: string }, callback?: (res: unknown) => void) => {
+      log(`peer:update-name: socket=${socket.id} username=${data?.username ?? "(clear)"}`);
+      const result = rooms.updatePeerName(socket.id, data?.username);
+      if (!result.ok) {
+        warn(`peer:update-name: FAILED for socket=${socket.id}, code=${result.code}`);
+        const errPayload = { code: result.code, message: result.message };
+        if (typeof callback === "function") return callback({ error: errPayload });
+        socket.emit("error", errPayload);
+        return;
+      }
+      socket.to(result.roomCode).emit("peer:update-name", {
+        peerId: result.peerId,
+        username: result.username,
+      });
+      log(`peer:update-name: broadcast to room ${result.roomCode} for peerId=${result.peerId.substring(0, 6)}`);
+      if (typeof callback === "function") callback({ ok: true });
+    });
 
     socket.on("disconnect", (reason) => {
       log(`disconnect: socket=${socket.id} reason=${reason}`);

@@ -10,6 +10,7 @@ Self-hosted, peer-to-peer file sharing over WebRTC data channels with mesh signa
 - **Self-hosted**: Run on your own machine or VPS with Docker Compose
 - **Secure by default**: Helmet headers, CORS allowlist, rate limiting, encrypted data channels (DTLS)
 - **No accounts required**: Share a room code with peers to connect
+- **Optional display names**: Set a name before joining or edit it in-room — stored in your browser only, never on the server
 
 ## Quick Start
 

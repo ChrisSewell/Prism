@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Shield, Zap, Globe, Lock } from "lucide-react";
+import { ArrowRight, Shield, Zap, Globe, Lock, User, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { checkWebRTCSupport } from "@/lib/compat";
+import { getSavedUsername, saveUsername } from "@/lib/storage";
 
 export default function Landing() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export default function Landing() {
   const [supported, setSupported] = useState(true);
   const [pinEnabled, setPinEnabled] = useState(false);
   const [pin, setPin] = useState("");
+  const [username, setUsername] = useState(() => getSavedUsername());
 
   useEffect(() => {
     setSupported(checkWebRTCSupport());
@@ -27,16 +29,27 @@ export default function Landing() {
   }, [searchParams]);
 
   const handleCreate = () => {
+    const trimmed = username.trim();
+    saveUsername(trimmed);
     const params = new URLSearchParams({ action: "create" });
     if (pinEnabled && pin) {
       params.set("pin", pin);
+    }
+    if (trimmed) {
+      params.set("username", trimmed);
     }
     navigate(`/room?${params.toString()}`);
   };
 
   const handleJoin = () => {
     if (!roomCode.trim()) return;
-    navigate(`/room?action=join&code=${roomCode.trim()}`);
+    const trimmed = username.trim();
+    saveUsername(trimmed);
+    const params = new URLSearchParams({ action: "join", code: roomCode.trim() });
+    if (trimmed) {
+      params.set("username", trimmed);
+    }
+    navigate(`/room?${params.toString()}`);
   };
 
   const isPinValid = !pinEnabled || /^\d{4,8}$/.test(pin);
@@ -80,6 +93,33 @@ export default function Landing() {
             <p className="text-muted-foreground">
               Send files straight between browsers. No uploads—your data stays peer-to-peer.
             </p>
+          </div>
+
+          {/* Display name */}
+          <div className="space-y-1.5">
+            <Label htmlFor="display-name" className="text-sm text-muted-foreground">
+              Display name <span className="text-xs">(optional — stored in your browser only)</span>
+            </Label>
+            <div className="relative">
+              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="display-name"
+                placeholder="Anonymous"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.slice(0, 30))}
+                className="pl-9 pr-9 text-base"
+              />
+              {username && (
+                <button
+                  type="button"
+                  onClick={() => { setUsername(""); saveUsername(""); }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                  aria-label="Clear display name"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Actions */}

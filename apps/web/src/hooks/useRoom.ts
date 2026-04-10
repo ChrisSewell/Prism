@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import type { PeerState, PeerConnectionState, TransferState, RoomState } from "@/lib/types";
-import { getSocket, disconnectSocket, createRoom as sigCreateRoom, joinRoom as sigJoinRoom, fetchIceServers } from "@/lib/signaling";
+import { getSocket, disconnectSocket, createRoom as sigCreateRoom, joinRoom as sigJoinRoom, fetchIceServers, updateUsername as sigUpdateUsername } from "@/lib/signaling";
 import { createPeerConnection, createDataChannel, sendFile, handleIncomingFrame } from "@/lib/webrtc";
 
 const log = (...args: unknown[]) => console.log("[useRoom]", ...args);
@@ -49,7 +49,8 @@ export function useRoom() {
   }, []);
 
   const getPeerLabel = useCallback((peerId: string) => {
-    return peerId.substring(0, 6);
+    const peer = peersRef.current.get(peerId);
+    return peer?.username || peerId.substring(0, 6);
   }, []);
 
   const flushPendingCandidates = useCallback(async (peerId: string) => {
@@ -72,7 +73,7 @@ export function useRoom() {
   }, []);
 
   const setupPeerConnection = useCallback(
-    async (peerId: string, isImpolite: boolean) => {
+    async (peerId: string, isImpolite: boolean, username?: string) => {
       const label = peerId.substring(0, 6);
       log(`setupPeerConnection(${label}): role=${isImpolite ? "IMPOLITE (offerer)" : "POLITE (answerer)"}, selfPeerId=${selfPeerIdRef.current?.substring(0, 6)}`);
       const socket = getSocket();
@@ -147,6 +148,7 @@ export function useRoom() {
       
       const peerState: PeerState = {
         peerId,
+        username,
         connectionState: "connecting",
         peerConnection: pc,
         dataChannel: null,
@@ -210,18 +212,20 @@ export function useRoom() {
       warn("socket connect_error:", err.message);
     });
 
-    socket.on("peer:joined", ({ peerId }: { peerId: string }) => {
-      log(`peer:joined received: peerId=${peerId.substring(0, 6)}, selfPeerId=${selfPeerIdRef.current?.substring(0, 6)}`);
-      toast(`Peer ${peerId.substring(0, 6)} joined`);
+    socket.on("peer:joined", ({ peerId, username }: { peerId: string; username?: string }) => {
+      const displayName = username || peerId.substring(0, 6);
+      log(`peer:joined received: peerId=${peerId.substring(0, 6)} username=${username ?? "(none)"}, selfPeerId=${selfPeerIdRef.current?.substring(0, 6)}`);
+      toast(`${displayName} joined`);
       const selfId = selfPeerIdRef.current!;
       const isImpolite = selfId < peerId;
       log(`peer:joined: selfId(${selfId.substring(0, 6)}) < peerId(${peerId.substring(0, 6)}) = ${isImpolite}, so self is ${isImpolite ? "IMPOLITE (will offer)" : "POLITE (will wait)"}`);
-      setupPeerConnection(peerId, isImpolite);
+      setupPeerConnection(peerId, isImpolite, username);
     });
 
     socket.on("peer:left", ({ peerId }: { peerId: string }) => {
+      const displayName = getPeerLabel(peerId);
       log(`peer:left received: peerId=${peerId.substring(0, 6)}`);
-      toast(`Peer ${peerId.substring(0, 6)} left`);
+      toast(`${displayName} left`);
       pendingCandidatesRef.current.delete(peerId);
       remoteDescriptionSetRef.current.delete(peerId);
       const peer = peersRef.current.get(peerId);
@@ -234,6 +238,11 @@ export function useRoom() {
           setRoomState((prev) => ({ ...prev, peers: new Map(peersRef.current) }));
         }, 3000);
       }
+    });
+
+    socket.on("peer:update-name", ({ peerId, username }: { peerId: string; username?: string }) => {
+      log(`peer:update-name received: peerId=${peerId.substring(0, 6)} username=${username ?? "(cleared)"}`);
+      updatePeerState(peerId, { username });
     });
 
     socket.on("signal:offer", async ({ fromPeerId, data }: { fromPeerId: string; toPeerId: string; data: RTCSessionDescriptionInit }) => {
@@ -321,10 +330,10 @@ export function useRoom() {
         log(`[socket.onAny] event="${event}"`, JSON.stringify(args).substring(0, 200));
       }
     });
-  }, [setupPeerConnection, flushPendingCandidates]);
+  }, [setupPeerConnection, flushPendingCandidates, getPeerLabel, updatePeerState]);
 
-  const create = useCallback(async (pin?: string) => {
-    log("create: starting, pin=", pin ? "yes" : "no");
+  const create = useCallback(async (pin?: string, username?: string) => {
+    log("create: starting, pin=", pin ? "yes" : "no", "username=", username ?? "(none)");
     try {
       iceServersRef.current = await fetchIceServers();
       log("create: ICE servers fetched:", JSON.stringify(iceServersRef.current.map(s => s.urls)));
@@ -343,13 +352,14 @@ export function useRoom() {
       });
 
       log("create: emitting room:create");
-      const result = await sigCreateRoom(pin);
+      const result = await sigCreateRoom(pin, username);
       log("create: room created, roomCode=", result.roomCode, "peerId=", result.peerId.substring(0, 6));
       selfPeerIdRef.current = result.peerId;
       setRoomState((prev) => ({
         ...prev,
         roomCode: result.roomCode,
         selfPeerId: result.peerId,
+        selfUsername: username || null,
         isConnected: true,
         error: null,
       }));
@@ -366,8 +376,8 @@ export function useRoom() {
     }
   }, [setupSignaling]);
 
-  const join = useCallback(async (roomCode: string, pin?: string) => {
-    log("join: starting, roomCode=", roomCode, "pin=", pin ? "yes" : "no");
+  const join = useCallback(async (roomCode: string, pin?: string, username?: string) => {
+    log("join: starting, roomCode=", roomCode, "pin=", pin ? "yes" : "no", "username=", username ?? "(none)");
     try {
       iceServersRef.current = await fetchIceServers();
       log("join: ICE servers fetched:", JSON.stringify(iceServersRef.current.map(s => s.urls)));
@@ -386,21 +396,22 @@ export function useRoom() {
       });
 
       log("join: emitting room:join");
-      const result = await sigJoinRoom(roomCode, pin);
-      log("join: joined room, selfPeerId=", result.selfPeerId.substring(0, 6), "existingPeers=", result.peers.map(p => p.substring(0, 6)));
+      const result = await sigJoinRoom(roomCode, pin, username);
+      log("join: joined room, selfPeerId=", result.selfPeerId.substring(0, 6), "existingPeers=", result.peers.map(p => p.peerId.substring(0, 6)));
       selfPeerIdRef.current = result.selfPeerId;
       setRoomState((prev) => ({
         ...prev,
         roomCode: result.roomCode,
         selfPeerId: result.selfPeerId,
+        selfUsername: username || null,
         isConnected: true,
         error: null,
       }));
 
-      for (const existingPeerId of result.peers) {
-        const isImpolite = result.selfPeerId < existingPeerId;
-        log(`join: setting up peer ${existingPeerId.substring(0, 6)}, isImpolite=${isImpolite}`);
-        await setupPeerConnection(existingPeerId, isImpolite);
+      for (const existingPeer of result.peers) {
+        const isImpolite = result.selfPeerId < existingPeer.peerId;
+        log(`join: setting up peer ${existingPeer.peerId.substring(0, 6)}, isImpolite=${isImpolite}`);
+        await setupPeerConnection(existingPeer.peerId, isImpolite, existingPeer.username);
       }
     } catch (err: unknown) {
       const error = err as { code?: string; message?: string };
@@ -428,12 +439,19 @@ export function useRoom() {
     setRoomState({
       roomCode: null,
       selfPeerId: null,
+      selfUsername: null,
       peers: new Map(),
       isConnected: false,
       error: null,
     });
     setTransfers([]);
     setSigConnected(false);
+  }, []);
+
+  const changeUsername = useCallback((name: string) => {
+    const trimmed = name.trim().slice(0, 30);
+    sigUpdateUsername(trimmed);
+    setRoomState((prev) => ({ ...prev, selfUsername: trimmed || null }));
   }, []);
 
   const sendFiles = useCallback(
@@ -518,6 +536,7 @@ export function useRoom() {
     create,
     join,
     leave,
+    changeUsername,
     sendFiles,
     cancelTransfer,
     retryPeer,

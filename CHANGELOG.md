@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] - 2026-04-10
+
+### Added
+
+- **Optional display names**: Peers can set a username before creating/joining a room, or edit it in-room. Names are relayed via the signaling server and displayed in the peer list and room header. Anonymous peers fall back to a truncated peer ID.
+- **Browser-local persistence**: Display names are saved in `localStorage` and auto-filled on return visits. Names are never stored on the server.
+- **`peer:update-name` signaling event**: New event allows peers to change their display name after joining. Changes are broadcast to all room members in real time.
+- **Self entry in peer list**: The local user now appears in the peer list with a "(you)" badge and inline name editing.
+- **Nginx reverse proxy for signaling**: The web container's nginx config now proxies `/socket.io/`, `/api/`, and `/health` to the signaling container, enabling single-port deployments without Caddy.
+
+### Changed
+
+- **Roster payload**: `peers` in the roster response is now `Array<{ peerId, username? }>` instead of `string[]`.
+- **`peer:joined` payload**: Now includes `username?` alongside `peerId`.
+- **`RoomCreatePayload` / `RoomJoinPayload`**: Accept optional `username` field.
+
 ## [1.0.1] - 2026-04-10
 
 ### Fixed
@@ -31,3 +47,4 @@ Initial release.
 - Docker Compose deployment with Caddy TLS reverse proxy
 - Security hardening: Helmet, CORS, rate limiting, non-root containers
 - Versioned binary framing protocol (`@prism/protocol`)
+

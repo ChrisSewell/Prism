@@ -2,6 +2,7 @@ export type PeerConnectionState = "connecting" | "connected" | "failed" | "disco
 
 export interface PeerState {
   peerId: string;
+  username?: string;
   connectionState: PeerConnectionState;
   peerConnection: RTCPeerConnection | null;
   dataChannel: RTCDataChannel | null;
@@ -31,6 +32,7 @@ export interface TransferState {
 export interface RoomState {
   roomCode: string | null;
   selfPeerId: string | null;
+  selfUsername?: string | null;
   peers: Map<string, PeerState>;
   isConnected: boolean;
   error: { code: string; message: string } | null;
