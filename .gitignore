@@ -26,3 +26,5 @@ coverage/
 
 playwright-report/
 test-results/
+
+deploy.sh
