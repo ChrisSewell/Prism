@@ -4,6 +4,9 @@ import type { PeerState, PeerConnectionState, TransferState, RoomState } from "@
 import { getSocket, disconnectSocket, createRoom as sigCreateRoom, joinRoom as sigJoinRoom, fetchIceServers } from "@/lib/signaling";
 import { createPeerConnection, createDataChannel, sendFile, handleIncomingFrame } from "@/lib/webrtc";
 
+const log = (...args: unknown[]) => console.log("[useRoom]", ...args);
+const warn = (...args: unknown[]) => console.warn("[useRoom]", ...args);
+
 export function useRoom() {
   const [roomState, setRoomState] = useState<RoomState>({
     roomCode: null,
@@ -19,6 +22,8 @@ export function useRoom() {
   const peersRef = useRef<Map<string, PeerState>>(new Map());
   const selfPeerIdRef = useRef<string | null>(null);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const remoteDescriptionSetRef = useRef<Set<string>>(new Set());
 
   const updatePeerState = useCallback((peerId: string, updates: Partial<PeerState>) => {
     const peer = peersRef.current.get(peerId);
@@ -47,11 +52,33 @@ export function useRoom() {
     return peerId.substring(0, 6);
   }, []);
 
+  const flushPendingCandidates = useCallback(async (peerId: string) => {
+    const peer = peersRef.current.get(peerId);
+    const pending = pendingCandidatesRef.current.get(peerId);
+    if (!peer?.peerConnection || !pending || pending.length === 0) {
+      log(`flushPendingCandidates(${peerId.substring(0, 6)}): nothing to flush (peer=${!!peer}, pending=${pending?.length ?? 0})`);
+      return;
+    }
+    log(`flushPendingCandidates(${peerId.substring(0, 6)}): flushing ${pending.length} buffered candidates`);
+    pendingCandidatesRef.current.delete(peerId);
+    for (const candidate of pending) {
+      try {
+        await peer.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        warn(`flushPendingCandidates(${peerId.substring(0, 6)}): failed to add buffered candidate`, e);
+      }
+    }
+    log(`flushPendingCandidates(${peerId.substring(0, 6)}): flush complete`);
+  }, []);
+
   const setupPeerConnection = useCallback(
     async (peerId: string, isImpolite: boolean) => {
+      const label = peerId.substring(0, 6);
+      log(`setupPeerConnection(${label}): role=${isImpolite ? "IMPOLITE (offerer)" : "POLITE (answerer)"}, selfPeerId=${selfPeerIdRef.current?.substring(0, 6)}`);
       const socket = getSocket();
 
       const onIceCandidate = (candidate: RTCIceCandidate) => {
+        log(`onIceCandidate(${label}): sending candidate, type=${candidate.type ?? "unknown"}, protocol=${candidate.protocol ?? "?"}, address=${candidate.address ?? "?"}`);
         socket.emit("signal:candidate", {
           toPeerId: peerId,
           data: {
@@ -74,6 +101,7 @@ export function useRoom() {
 
       const onConnectionStateChange = (state: RTCPeerConnectionState) => {
         const mapped = mapConnectionState(state);
+        log(`onConnectionStateChange(${label}): raw="${state}" mapped="${mapped}"`);
         updatePeerState(peerId, { connectionState: mapped });
         if (mapped === "connected") {
           toast.success(`Connected to peer ${getPeerLabel(peerId)}`);
@@ -83,7 +111,14 @@ export function useRoom() {
       };
 
       const onDataChannel = (channel: RTCDataChannel) => {
+        log(`onDataChannel(${label}): received data channel "${channel.label}", readyState=${channel.readyState}`);
         updatePeerState(peerId, { dataChannel: channel });
+        channel.onopen = () => {
+          log(`onDataChannel(${label}): channel OPEN`);
+          updatePeerState(peerId, { connectionState: "connected" });
+        };
+        channel.onclose = () => log(`onDataChannel(${label}): channel CLOSED`);
+        channel.onerror = (e) => warn(`onDataChannel(${label}): channel ERROR`, e);
         channel.onmessage = (e) => {
           const peer = peersRef.current.get(peerId);
           if (!peer) return;
@@ -98,6 +133,17 @@ export function useRoom() {
       };
 
       const pc = createPeerConnection(iceServersRef.current, onIceCandidate, onConnectionStateChange, onDataChannel);
+      log(`setupPeerConnection(${label}): RTCPeerConnection created, iceServers=${JSON.stringify(iceServersRef.current.map(s => s.urls))}`);
+
+      pc.onicegatheringstatechange = () => {
+        log(`iceGatheringState(${label}): ${pc.iceGatheringState}`);
+      };
+      pc.oniceconnectionstatechange = () => {
+        log(`iceConnectionState(${label}): ${pc.iceConnectionState}`);
+      };
+      pc.onsignalingstatechange = () => {
+        log(`signalingState(${label}): ${pc.signalingState}`);
+      };
       
       const peerState: PeerState = {
         peerId,
@@ -110,13 +156,16 @@ export function useRoom() {
       peersRef.current.set(peerId, peerState);
       setRoomState((prev) => ({ ...prev, peers: new Map(peersRef.current) }));
 
-      // If impolite (selfPeerId < peerId), we create offer
       if (isImpolite) {
+        log(`setupPeerConnection(${label}): creating data channel + offer`);
         const dc = createDataChannel(pc);
         peerState.dataChannel = dc;
         dc.onopen = () => {
+          log(`dc.onopen(${label}): offerer data channel OPEN`);
           updatePeerState(peerId, { connectionState: "connected" });
         };
+        dc.onclose = () => log(`dc.onclose(${label}): offerer data channel CLOSED`);
+        dc.onerror = (e) => warn(`dc.onerror(${label}): offerer data channel ERROR`, e);
         dc.onmessage = (e) => {
           const peer = peersRef.current.get(peerId);
           if (!peer) return;
@@ -130,11 +179,16 @@ export function useRoom() {
         };
 
         const offer = await pc.createOffer();
+        log(`setupPeerConnection(${label}): offer created, setting local description`);
         await pc.setLocalDescription(offer);
+        log(`setupPeerConnection(${label}): local description set, emitting signal:offer`);
         socket.emit("signal:offer", {
           toPeerId: peerId,
           data: { sdp: offer.sdp, type: offer.type },
         });
+        log(`setupPeerConnection(${label}): signal:offer emitted`);
+      } else {
+        log(`setupPeerConnection(${label}): polite peer, waiting for offer`);
       }
     },
     [updatePeerState, updateTransfer, getPeerLabel],
@@ -142,19 +196,34 @@ export function useRoom() {
 
   const setupSignaling = useCallback(() => {
     const socket = getSocket();
+    log("setupSignaling: registering socket handlers, socket.id=", socket.id, "connected=", socket.connected);
 
-    socket.on("connect", () => setSigConnected(true));
-    socket.on("disconnect", () => setSigConnected(false));
+    socket.on("connect", () => {
+      log("socket connected, id=", socket.id);
+      setSigConnected(true);
+    });
+    socket.on("disconnect", (reason) => {
+      log("socket disconnected, reason=", reason);
+      setSigConnected(false);
+    });
+    socket.on("connect_error", (err) => {
+      warn("socket connect_error:", err.message);
+    });
 
     socket.on("peer:joined", ({ peerId }: { peerId: string }) => {
+      log(`peer:joined received: peerId=${peerId.substring(0, 6)}, selfPeerId=${selfPeerIdRef.current?.substring(0, 6)}`);
       toast(`Peer ${peerId.substring(0, 6)} joined`);
       const selfId = selfPeerIdRef.current!;
       const isImpolite = selfId < peerId;
+      log(`peer:joined: selfId(${selfId.substring(0, 6)}) < peerId(${peerId.substring(0, 6)}) = ${isImpolite}, so self is ${isImpolite ? "IMPOLITE (will offer)" : "POLITE (will wait)"}`);
       setupPeerConnection(peerId, isImpolite);
     });
 
     socket.on("peer:left", ({ peerId }: { peerId: string }) => {
+      log(`peer:left received: peerId=${peerId.substring(0, 6)}`);
       toast(`Peer ${peerId.substring(0, 6)} left`);
+      pendingCandidatesRef.current.delete(peerId);
+      remoteDescriptionSetRef.current.delete(peerId);
       const peer = peersRef.current.get(peerId);
       if (peer) {
         peer.peerConnection?.close();
@@ -168,58 +237,114 @@ export function useRoom() {
     });
 
     socket.on("signal:offer", async ({ fromPeerId, data }: { fromPeerId: string; toPeerId: string; data: RTCSessionDescriptionInit }) => {
+      const label = fromPeerId.substring(0, 6);
+      log(`signal:offer received from ${label}, type=${data.type}`);
       let peer = peersRef.current.get(fromPeerId);
       if (!peer) {
+        log(`signal:offer(${label}): no peer state yet, calling setupPeerConnection as polite`);
         await setupPeerConnection(fromPeerId, false);
         peer = peersRef.current.get(fromPeerId)!;
       }
       const pc = peer.peerConnection!;
-      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      log(`signal:offer(${label}): signalingState before setRemoteDescription = ${pc.signalingState}`);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+        log(`signal:offer(${label}): setRemoteDescription SUCCESS, signalingState = ${pc.signalingState}`);
+      } catch (e) {
+        warn(`signal:offer(${label}): setRemoteDescription FAILED`, e);
+        return;
+      }
+      remoteDescriptionSetRef.current.add(fromPeerId);
+      await flushPendingCandidates(fromPeerId);
       const answer = await pc.createAnswer();
+      log(`signal:offer(${label}): answer created, setting local description`);
       await pc.setLocalDescription(answer);
+      log(`signal:offer(${label}): local description set, emitting signal:answer`);
       socket.emit("signal:answer", {
         toPeerId: fromPeerId,
         data: { sdp: answer.sdp, type: answer.type },
       });
+      log(`signal:offer(${label}): signal:answer emitted`);
     });
 
     socket.on("signal:answer", async ({ fromPeerId, data }: { fromPeerId: string; toPeerId: string; data: RTCSessionDescriptionInit }) => {
+      const label = fromPeerId.substring(0, 6);
+      log(`signal:answer received from ${label}, type=${data.type}`);
       const peer = peersRef.current.get(fromPeerId);
-      if (!peer) return;
-      await peer.peerConnection!.setRemoteDescription(new RTCSessionDescription(data));
+      if (!peer) {
+        warn(`signal:answer(${label}): no peer state found, ignoring`);
+        return;
+      }
+      const pc = peer.peerConnection!;
+      log(`signal:answer(${label}): signalingState before setRemoteDescription = ${pc.signalingState}`);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data));
+        log(`signal:answer(${label}): setRemoteDescription SUCCESS, signalingState = ${pc.signalingState}`);
+      } catch (e) {
+        warn(`signal:answer(${label}): setRemoteDescription FAILED`, e);
+        return;
+      }
+      remoteDescriptionSetRef.current.add(fromPeerId);
+      await flushPendingCandidates(fromPeerId);
     });
 
     socket.on("signal:candidate", async ({ fromPeerId, data }: { fromPeerId: string; toPeerId: string; data: RTCIceCandidateInit }) => {
+      const label = fromPeerId.substring(0, 6);
+      if (!remoteDescriptionSetRef.current.has(fromPeerId)) {
+        const pending = pendingCandidatesRef.current.get(fromPeerId) || [];
+        pending.push(data);
+        pendingCandidatesRef.current.set(fromPeerId, pending);
+        log(`signal:candidate(${label}): BUFFERED (remoteDescription not set yet), total buffered=${pending.length}`);
+        return;
+      }
       const peer = peersRef.current.get(fromPeerId);
-      if (!peer) return;
+      if (!peer) {
+        warn(`signal:candidate(${label}): no peer state found, DROPPING candidate`);
+        return;
+      }
       try {
         await peer.peerConnection!.addIceCandidate(new RTCIceCandidate(data));
+        log(`signal:candidate(${label}): added candidate OK`);
       } catch (e) {
-        console.warn("Failed to add ICE candidate", e);
+        warn(`signal:candidate(${label}): addIceCandidate FAILED`, e);
       }
     });
 
     socket.on("error", ({ code, message }: { code: string; message: string }) => {
+      warn(`socket error event: code=${code} message=${message}`);
       setRoomState((prev) => ({ ...prev, error: { code, message } }));
       toast.error(message);
     });
-  }, [setupPeerConnection]);
+
+    socket.onAny((event, ...args) => {
+      if (event.startsWith("signal:") || event.startsWith("peer:") || event.startsWith("room:")) {
+        log(`[socket.onAny] event="${event}"`, JSON.stringify(args).substring(0, 200));
+      }
+    });
+  }, [setupPeerConnection, flushPendingCandidates]);
 
   const create = useCallback(async (pin?: string) => {
+    log("create: starting, pin=", pin ? "yes" : "no");
     try {
       iceServersRef.current = await fetchIceServers();
+      log("create: ICE servers fetched:", JSON.stringify(iceServersRef.current.map(s => s.urls)));
       setupSignaling();
       const socket = getSocket();
-      if (!socket.connected) socket.connect();
+      if (!socket.connected) {
+        log("create: socket not connected, calling connect()");
+        socket.connect();
+      }
       
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("Connection timeout")), 10000);
-        if (socket.connected) { clearTimeout(timeout); resolve(); return; }
-        socket.once("connect", () => { clearTimeout(timeout); resolve(); });
-        socket.once("connect_error", (err) => { clearTimeout(timeout); reject(err); });
+        if (socket.connected) { clearTimeout(timeout); log("create: socket already connected"); resolve(); return; }
+        socket.once("connect", () => { clearTimeout(timeout); log("create: socket connected via event"); resolve(); });
+        socket.once("connect_error", (err) => { clearTimeout(timeout); warn("create: socket connect_error", err.message); reject(err); });
       });
 
+      log("create: emitting room:create");
       const result = await sigCreateRoom(pin);
+      log("create: room created, roomCode=", result.roomCode, "peerId=", result.peerId.substring(0, 6));
       selfPeerIdRef.current = result.peerId;
       setRoomState((prev) => ({
         ...prev,
@@ -231,6 +356,7 @@ export function useRoom() {
       return result.roomCode;
     } catch (err: unknown) {
       const error = err as { code?: string; message?: string };
+      warn("create: FAILED", error);
       setRoomState((prev) => ({
         ...prev,
         error: { code: error.code || "UNKNOWN", message: error.message || "Failed to create room" },
@@ -241,20 +367,27 @@ export function useRoom() {
   }, [setupSignaling]);
 
   const join = useCallback(async (roomCode: string, pin?: string) => {
+    log("join: starting, roomCode=", roomCode, "pin=", pin ? "yes" : "no");
     try {
       iceServersRef.current = await fetchIceServers();
+      log("join: ICE servers fetched:", JSON.stringify(iceServersRef.current.map(s => s.urls)));
       setupSignaling();
       const socket = getSocket();
-      if (!socket.connected) socket.connect();
+      if (!socket.connected) {
+        log("join: socket not connected, calling connect()");
+        socket.connect();
+      }
       
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("Connection timeout")), 10000);
-        if (socket.connected) { clearTimeout(timeout); resolve(); return; }
-        socket.once("connect", () => { clearTimeout(timeout); resolve(); });
-        socket.once("connect_error", (err) => { clearTimeout(timeout); reject(err); });
+        if (socket.connected) { clearTimeout(timeout); log("join: socket already connected"); resolve(); return; }
+        socket.once("connect", () => { clearTimeout(timeout); log("join: socket connected via event"); resolve(); });
+        socket.once("connect_error", (err) => { clearTimeout(timeout); warn("join: socket connect_error", err.message); reject(err); });
       });
 
+      log("join: emitting room:join");
       const result = await sigJoinRoom(roomCode, pin);
+      log("join: joined room, selfPeerId=", result.selfPeerId.substring(0, 6), "existingPeers=", result.peers.map(p => p.substring(0, 6)));
       selfPeerIdRef.current = result.selfPeerId;
       setRoomState((prev) => ({
         ...prev,
@@ -266,10 +399,12 @@ export function useRoom() {
 
       for (const existingPeerId of result.peers) {
         const isImpolite = result.selfPeerId < existingPeerId;
+        log(`join: setting up peer ${existingPeerId.substring(0, 6)}, isImpolite=${isImpolite}`);
         await setupPeerConnection(existingPeerId, isImpolite);
       }
     } catch (err: unknown) {
       const error = err as { code?: string; message?: string };
+      warn("join: FAILED", error);
       setRoomState((prev) => ({
         ...prev,
         error: { code: error.code || "UNKNOWN", message: error.message || "Failed to join room" },
@@ -280,12 +415,15 @@ export function useRoom() {
   }, [setupSignaling, setupPeerConnection]);
 
   const leave = useCallback(() => {
+    log("leave: cleaning up");
     for (const [, peer] of peersRef.current) {
       peer.peerConnection?.close();
     }
     peersRef.current.clear();
     abortControllersRef.current.forEach((ac) => ac.abort());
     abortControllersRef.current.clear();
+    pendingCandidatesRef.current.clear();
+    remoteDescriptionSetRef.current.clear();
     disconnectSocket();
     setRoomState({
       roomCode: null,
@@ -352,11 +490,14 @@ export function useRoom() {
 
   const retryPeer = useCallback(
     async (peerId: string) => {
+      log(`retryPeer(${peerId.substring(0, 6)}): retrying`);
       const peer = peersRef.current.get(peerId);
       if (peer) {
         peer.peerConnection?.close();
         peersRef.current.delete(peerId);
       }
+      pendingCandidatesRef.current.delete(peerId);
+      remoteDescriptionSetRef.current.delete(peerId);
       const selfId = selfPeerIdRef.current!;
       const isImpolite = selfId < peerId;
       await setupPeerConnection(peerId, isImpolite);

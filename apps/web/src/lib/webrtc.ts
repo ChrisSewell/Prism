@@ -3,23 +3,33 @@ import { encodeFrame, decodeFrame, FrameType, validateFilename } from "./protoco
 import type { TransferState } from "./types";
 import { v4 as uuidv4 } from "uuid";
 
+const log = (...args: unknown[]) => console.log("[webrtc]", ...args);
+
 export function createPeerConnection(
   iceServers: RTCIceServer[],
   onIceCandidate: (candidate: RTCIceCandidate) => void,
   onConnectionStateChange: (state: RTCPeerConnectionState) => void,
   onDataChannel: (channel: RTCDataChannel) => void,
 ): RTCPeerConnection {
+  log("createPeerConnection: creating with", iceServers.length, "ICE server configs");
   const pc = new RTCPeerConnection({ iceServers });
 
   pc.onicecandidate = (e) => {
-    if (e.candidate) onIceCandidate(e.candidate);
+    if (e.candidate) {
+      log("onicecandidate: candidate=", e.candidate.candidate?.substring(0, 80));
+      onIceCandidate(e.candidate);
+    } else {
+      log("onicecandidate: ICE gathering complete (null candidate)");
+    }
   };
 
   pc.onconnectionstatechange = () => {
+    log("onconnectionstatechange:", pc.connectionState);
     onConnectionStateChange(pc.connectionState);
   };
 
   pc.ondatachannel = (e) => {
+    log("ondatachannel: received channel", e.channel.label, "readyState=", e.channel.readyState);
     setupDataChannel(e.channel);
     onDataChannel(e.channel);
   };
@@ -28,6 +38,7 @@ export function createPeerConnection(
 }
 
 export function createDataChannel(pc: RTCPeerConnection): RTCDataChannel {
+  log("createDataChannel: creating 'file-transfer' channel");
   const dc = pc.createDataChannel("file-transfer", { ordered: true });
   setupDataChannel(dc);
   return dc;

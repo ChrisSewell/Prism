@@ -73,6 +73,8 @@ The signaling server is assumed to be reachable from the public internet. Friend
 - Correlation IDs per connection for tracing
 - Default: rotate daily, no long-term archival of signaling payloads
 - Operators with compliance needs override locally
+- Debug logging on the signaling server includes peer IDs (UUIDs) and socket IDs but does not log SDP bodies, ICE candidate addresses, or TURN credentials
+- Browser-side debug logs (visible only in the user's DevTools) include ICE candidate addresses and connection state transitions for troubleshooting
 
 ## Security test gates
 
