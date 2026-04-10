@@ -82,7 +82,7 @@ Multiple STUN servers from different providers cause the browser to gather more 
 
 **Symmetric NAT**: When a peer is behind a fully symmetric NAT, direct P2P is not possible regardless of STUN configuration. The connection will fall back to TURN relay. This is expected behavior. To improve relay performance, consider using a cloud TURN provider with edge servers closer to users (e.g. Cloudflare TURN, Metered, Twilio).
 
-The client automatically attempts one ICE restart before falling back to relay, and manual retry re-fetches fresh ICE server credentials.
+The client automatically attempts one ICE restart before falling back to relay, and manual retry re-fetches fresh ICE server credentials. Additionally, a background loop checks relayed peers every 30 seconds and attempts to upgrade them to P2P via ICE restart when no file transfer is active — this handles cases where the initial connection raced to relay but a direct path is available.
 
 ### Firewall / port forwarding
 
@@ -143,6 +143,18 @@ When debugging connection issues, filter the browser console by these tags. Key 
 - **`ICE diagnostics`** → dumps all gathered candidates and candidate-pair states on connection failure
 - **`detectRelayType`** → logs the selected candidate pair details (type, protocol, address, port) on success
 - **`ICE restart offer emitted`** → automatic ICE restart was triggered after initial failure
+
+### Debug panel
+
+For visual ICE diagnostics, build the web app with `VITE_DEBUG_ENABLED=true`:
+
+```bash
+docker compose build --build-arg VITE_DEBUG_ENABLED=true web
+```
+
+This adds a collapsible panel at the bottom of the room page showing per-peer connection states, all gathered ICE candidates, the candidate pair table with RTT and byte counters, and the selected pair. The panel includes a **Copy** button that serializes all debug data to the clipboard for sharing.
+
+The debug panel is excluded from the build by default and should only be enabled for troubleshooting.
 
 ## Log retention
 

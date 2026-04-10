@@ -110,6 +110,7 @@ export function useRoom() {
   const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const remoteDescriptionSetRef = useRef<Set<string>>(new Set());
   const iceRestartAttemptedRef = useRef<Set<string>>(new Set());
+  const upgradeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const updatePeerState = useCallback((peerId: string, updates: Partial<PeerState>) => {
     const peer = peersRef.current.get(peerId);
@@ -186,6 +187,20 @@ export function useRoom() {
         }
       };
 
+      const checkAndUpdateRelayType = (delayMs: number, showToast: boolean) => {
+        setTimeout(async () => {
+          const peer = peersRef.current.get(peerId);
+          if (!peer?.peerConnection || peer.peerConnection.connectionState === "closed") return;
+          const relayType = await detectRelayType(peer.peerConnection);
+          updatePeerState(peerId, { relayType });
+          if (showToast && relayType === "relayed") {
+            toast.warning(
+              `Connection to ${getPeerLabel(peerId)} is relayed through a server — transfer speeds may be reduced`,
+            );
+          }
+        }, delayMs);
+      };
+
       const onConnectionStateChange = (state: RTCPeerConnectionState) => {
         const mapped = mapConnectionState(state);
         log(`onConnectionStateChange(${label}): raw="${state}" mapped="${mapped}"`);
@@ -193,17 +208,8 @@ export function useRoom() {
         if (mapped === "connected") {
           iceRestartAttemptedRef.current.delete(peerId);
           toast.success(`Connected to peer ${getPeerLabel(peerId)}`);
-          const peer = peersRef.current.get(peerId);
-          if (peer?.peerConnection) {
-            detectRelayType(peer.peerConnection).then((relayType) => {
-              updatePeerState(peerId, { relayType });
-              if (relayType === "relayed") {
-                toast.warning(
-                  `Connection to ${getPeerLabel(peerId)} is relayed through a server — transfer speeds may be reduced`,
-                );
-              }
-            });
-          }
+          checkAndUpdateRelayType(3000, true);
+          checkAndUpdateRelayType(8000, false);
         } else if (mapped === "failed") {
           toast.error(`Connection to peer ${getPeerLabel(peerId)} failed`);
         }
@@ -562,6 +568,10 @@ export function useRoom() {
     pendingCandidatesRef.current.clear();
     remoteDescriptionSetRef.current.clear();
     iceRestartAttemptedRef.current.clear();
+    if (upgradeIntervalRef.current) {
+      clearInterval(upgradeIntervalRef.current);
+      upgradeIntervalRef.current = null;
+    }
     disconnectSocket();
     setRoomState({
       roomCode: null,
@@ -657,11 +667,160 @@ export function useRoom() {
     [setupPeerConnection],
   );
 
+  const transfersRef = useRef(transfers);
+  transfersRef.current = transfers;
+
+  useEffect(() => {
+    if (!roomState.isConnected) {
+      if (upgradeIntervalRef.current) {
+        clearInterval(upgradeIntervalRef.current);
+        upgradeIntervalRef.current = null;
+      }
+      return;
+    }
+
+    upgradeIntervalRef.current = setInterval(async () => {
+      const selfId = selfPeerIdRef.current;
+      if (!selfId) return;
+
+      for (const [peerId, peer] of peersRef.current) {
+        if (peer.connectionState !== "connected") continue;
+        if (peer.relayType === "direct") continue;
+
+        const pc = peer.peerConnection;
+        if (!pc || pc.connectionState === "closed") continue;
+
+        const currentType = await detectRelayType(pc);
+        if (currentType !== peer.relayType) {
+          log(`upgradeLoop(${peerId.substring(0, 6)}): relay type changed ${peer.relayType} -> ${currentType}`);
+          updatePeerState(peerId, { relayType: currentType });
+        }
+        if (currentType !== "relayed") continue;
+
+        if (!(selfId < peerId)) continue;
+
+        const hasActiveTransfer = transfersRef.current.some(
+          (t) => t.peerId === peerId && t.status === "transferring",
+        );
+        if (hasActiveTransfer) {
+          log(`upgradeLoop(${peerId.substring(0, 6)}): skipping ICE restart — active transfer`);
+          continue;
+        }
+
+        log(`upgradeLoop(${peerId.substring(0, 6)}): attempting ICE restart to upgrade to P2P`);
+        try {
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          remoteDescriptionSetRef.current.delete(peerId);
+          pendingCandidatesRef.current.delete(peerId);
+          const socket = getSocket();
+          socket.emit("signal:offer", {
+            toPeerId: peerId,
+            data: { sdp: offer.sdp, type: offer.type },
+          });
+          log(`upgradeLoop(${peerId.substring(0, 6)}): ICE restart offer emitted`);
+
+          setTimeout(async () => {
+            const p = peersRef.current.get(peerId);
+            if (!p?.peerConnection || p.peerConnection.connectionState === "closed") return;
+            const relayType = await detectRelayType(p.peerConnection);
+            log(`upgradeLoop(${peerId.substring(0, 6)}): post-restart relay type = ${relayType}`);
+            updatePeerState(peerId, { relayType });
+          }, 5000);
+        } catch (e) {
+          warn(`upgradeLoop(${peerId.substring(0, 6)}): ICE restart failed`, e);
+        }
+      }
+    }, 30000);
+
+    return () => {
+      if (upgradeIntervalRef.current) {
+        clearInterval(upgradeIntervalRef.current);
+        upgradeIntervalRef.current = null;
+      }
+    };
+  }, [roomState.isConnected, updatePeerState]);
+
   useEffect(() => {
     return () => {
       leave();
     };
   }, [leave]);
+
+  const getDebugInfo = useCallback(async (): Promise<PeerDebugInfo[]> => {
+    const result: PeerDebugInfo[] = [];
+    for (const [peerId, peer] of peersRef.current) {
+      const pc = peer.peerConnection;
+      if (!pc) continue;
+      const info: PeerDebugInfo = {
+        peerId,
+        username: peer.username,
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+        iceGatheringState: pc.iceGatheringState,
+        signalingState: pc.signalingState,
+        relayType: peer.relayType ?? "unknown",
+        localCandidates: [],
+        remoteCandidates: [],
+        candidatePairs: [],
+        selectedPair: null,
+      };
+      try {
+        const stats = await pc.getStats();
+        let activePairId: string | undefined;
+        stats.forEach((r) => {
+          if (r.type === "transport" && r.selectedCandidatePairId) {
+            activePairId = r.selectedCandidatePairId;
+          }
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const candidateMap = new Map<string, any>();
+        stats.forEach((r) => {
+          if (r.type === "local-candidate") {
+            candidateMap.set(r.id, r);
+            info.localCandidates.push({
+              type: r.candidateType, protocol: r.protocol ?? "?",
+              address: r.address ?? "?", port: r.port ?? 0,
+            });
+          }
+          if (r.type === "remote-candidate") {
+            candidateMap.set(r.id, r);
+            info.remoteCandidates.push({
+              type: r.candidateType, protocol: r.protocol ?? "?",
+              address: r.address ?? "?", port: r.port ?? 0,
+            });
+          }
+        });
+
+        stats.forEach((r) => {
+          if (r.type === "candidate-pair") {
+            const local = candidateMap.get(r.localCandidateId);
+            const remote = candidateMap.get(r.remoteCandidateId);
+            const pair: CandidatePairInfo = {
+              state: r.state,
+              nominated: !!r.nominated,
+              selected: r.id === activePairId,
+              localType: local?.candidateType ?? "?",
+              remoteType: remote?.candidateType ?? "?",
+              localAddress: `${local?.address ?? "?"}:${local?.port ?? "?"}`,
+              remoteAddress: `${remote?.address ?? "?"}:${remote?.port ?? "?"}`,
+              protocol: local?.protocol ?? "?",
+              bytesSent: r.bytesSent ?? 0,
+              bytesReceived: r.bytesReceived ?? 0,
+              currentRoundTripTime: r.currentRoundTripTime,
+            };
+            info.candidatePairs.push(pair);
+            if (r.id === activePairId || (!activePairId && r.state === "succeeded" && r.nominated)) {
+              info.selectedPair = pair;
+            }
+          }
+        });
+      } catch { /* stats unavailable */ }
+      result.push(info);
+    }
+    return result;
+  }, []);
 
   return {
     roomState,
@@ -674,5 +833,41 @@ export function useRoom() {
     sendFiles,
     cancelTransfer,
     retryPeer,
+    getDebugInfo,
   };
+}
+
+export interface CandidateInfo {
+  type: string;
+  protocol: string;
+  address: string;
+  port: number;
+}
+
+export interface CandidatePairInfo {
+  state: string;
+  nominated: boolean;
+  selected: boolean;
+  localType: string;
+  remoteType: string;
+  localAddress: string;
+  remoteAddress: string;
+  protocol: string;
+  bytesSent: number;
+  bytesReceived: number;
+  currentRoundTripTime?: number;
+}
+
+export interface PeerDebugInfo {
+  peerId: string;
+  username?: string;
+  connectionState: string;
+  iceConnectionState: string;
+  iceGatheringState: string;
+  signalingState: string;
+  relayType: string;
+  localCandidates: CandidateInfo[];
+  remoteCandidates: CandidateInfo[];
+  candidatePairs: CandidatePairInfo[];
+  selectedPair: CandidatePairInfo | null;
 }

@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Automatic ICE restart on failure**: When `iceConnectionState` transitions to `"failed"`, the offerer automatically attempts one ICE restart (`createOffer({ iceRestart: true })`) to re-gather candidates and retry connectivity checks without tearing down the PeerConnection. If the restart also fails, falls back to the existing manual retry path.
+- **Periodic P2P upgrade for relayed peers**: A background loop (every 30 seconds) re-detects relay type for all connected peers and, for any that are still relayed with no active file transfer, triggers an ICE restart to attempt a P2P upgrade. Also corrects "unknown" relay status from early detection races.
+- **Debug panel** (`VITE_DEBUG_ENABLED`): Collapsible ICE diagnostics panel at the bottom of the room page showing per-peer connection states, all gathered candidates, candidate pair table with RTT/bytes, and selected pair details. Includes manual/auto refresh and a copy-to-clipboard button for sharing debug dumps. Gated behind a build-time env flag.
 - **ICE diagnostics logging**: On connection failure, all gathered ICE candidates and candidate-pair states are dumped to the console for debugging. On success, the selected candidate pair's full details (type, protocol, address, port) are logged alongside the relay/P2P detection.
 - **ICE candidate error visibility**: `icecandidateerror` events are now logged with the failing URL, error code, and error text, surfacing STUN/TURN reachability issues in the browser console.
 
@@ -17,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Optimized RTCPeerConnection config**: Added `iceCandidatePoolSize: 2` to pre-allocate gathering resources (srflx candidates are ready faster) and `bundlePolicy: "max-bundle"` to reduce the number of NAT bindings needed.
 - **Diversified default STUN servers**: Fallback ICE config now includes Google and Cloudflare STUN endpoints (consolidated into a single `urls` array) so clients behind symmetric NATs gather more reflexive candidates from different vantage points.
 - **`retryPeer` re-fetches ICE servers**: Manual peer retry now calls `/api/ice` for fresh TURN credentials and server config before creating a new PeerConnection, instead of reusing stale config from room-join time.
+- **Delayed relay detection**: Connection type (P2P vs relayed) is now checked 3 seconds after connecting, with a second check at 8 seconds, giving ICE time to settle on the optimal candidate pair instead of snapshotting a transient relay state.
 
 ## [1.2.0] - 2026-04-10
 
