@@ -36,9 +36,9 @@ export function TransferAnimation({ direction, progress, isActive }: TransferAni
           <motion.div
             key={i}
             className="absolute top-0 h-full w-3 rounded-full bg-primary"
-            initial={{ x: isSending ? "-12px" : "100%" }}
+            initial={{ left: isSending ? "-12px" : "100%" }}
             animate={{
-              x: isSending ? ["0%", "100%"] : ["100%", "0%"],
+              left: isSending ? ["-12px", "100%"] : ["100%", "-12px"],
               opacity: [0, 1, 1, 0],
             }}
             transition={{

@@ -1,7 +1,6 @@
 import { Download, X, ArrowUp, ArrowDown } from "lucide-react";
 import type { TransferState } from "@/lib/types";
 import { formatFileSize, formatSpeed } from "@/lib/protocol";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import { TransferAnimation } from "./TransferAnimation";
@@ -91,18 +90,11 @@ function TransferRow({ transfer: t, onCancel }: { transfer: TransferState; onCan
         )}
       </div>
       {(t.status === "transferring" || t.status === "pending") && (
-        <>
-          <TransferAnimation
-            direction={t.direction}
-            progress={progress}
-            isActive={t.status === "transferring"}
-          />
-          <Progress
-            value={progress}
-            className="h-1.5"
-            aria-label={`Transfer progress: ${progress}%`}
-          />
-        </>
+        <TransferAnimation
+          direction={t.direction}
+          progress={progress}
+          isActive={t.status === "transferring"}
+        />
       )}
     </motion.div>
   );

@@ -1,8 +1,8 @@
 /** Max filename length in bytes (UTF-8 encoded) */
 export const MAX_FILENAME_BYTES = 1024;
 
-/** Max chunk payload in bytes — safely under SCTP ~256 KiB limit */
-export const MAX_CHUNK_PAYLOAD = 64 * 1024;
+/** Max chunk payload in bytes — at the SCTP ~256 KiB message limit */
+export const MAX_CHUNK_PAYLOAD = 256 * 1024;
 
 /** Max total frame size including headers */
 export const MAX_FRAME_SIZE = MAX_CHUNK_PAYLOAD + 4096;

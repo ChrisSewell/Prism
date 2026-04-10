@@ -25,6 +25,7 @@ export interface TransferState {
   peerLabel: string;
   blobUrl?: string;
   startTime: number;
+  lastProgressTime?: number;
   file?: File; // for outgoing
   chunks?: Uint8Array[]; // for incoming
 }
