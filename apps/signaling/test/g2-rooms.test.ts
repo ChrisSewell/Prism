@@ -71,7 +71,8 @@ describe("G2 — rooms + pairwise signaling relay (mesh baseline)", () => {
     });
 
     expect(joinRes.selfPeerId).toBeDefined();
-    expect(joinRes.peers).toEqual([peerIdA]);
+    const peers = joinRes.peers as Array<{ peerId: string; username?: string }>;
+    expect(peers.map((p) => p.peerId)).toEqual([peerIdA]);
 
     const joined = await joinPromise;
     expect(joined.peerId).toBe(joinRes.selfPeerId);
@@ -231,12 +232,13 @@ describe("G2 — rooms + pairwise signaling relay (mesh baseline)", () => {
       clientB.emit("room:join", { roomCode }, resolve);
     });
     const peerIdB = joinResB.selfPeerId as string;
-    expect((joinResB.peers as string[])).toContain(peerIdA);
+    const peersB = (joinResB.peers as Array<{ peerId: string }>).map((p) => p.peerId);
+    expect(peersB).toContain(peerIdA);
 
     const joinResC = await new Promise<Record<string, unknown>>((resolve) => {
       clientC.emit("room:join", { roomCode }, resolve);
     });
-    const peersSeenByC = joinResC.peers as string[];
+    const peersSeenByC = (joinResC.peers as Array<{ peerId: string }>).map((p) => p.peerId);
     expect(peersSeenByC).toContain(peerIdA);
     expect(peersSeenByC).toContain(peerIdB);
   });
