@@ -70,9 +70,9 @@ The signaling server handles:
 - Room creation and management (short codes, TTL, peer caps)
 - Roster events (`peer:joined`, `peer:left`)
 - Directed relay of SDP offers/answers and ICE candidates
-- ICE server configuration endpoint
+- ICE server configuration endpoint (STUN + TURN with short-lived credentials)
 
-File bytes are transferred peer-to-peer over WebRTC data channels using a versioned binary framing protocol.
+File bytes are transferred peer-to-peer over WebRTC data channels using a versioned binary framing protocol. Connections use aggressive NAT traversal with pre-allocated candidate pools, diverse STUN servers, and automatic ICE restart on failure. When direct P2P is not possible (e.g. symmetric NAT), connections fall back to the TURN relay.
 
 ## Project Structure
 

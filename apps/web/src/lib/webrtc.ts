@@ -4,15 +4,21 @@ import type { TransferState } from "./types";
 import { v4 as uuidv4 } from "uuid";
 
 const log = (...args: unknown[]) => console.log("[webrtc]", ...args);
+const warn = (...args: unknown[]) => console.warn("[webrtc]", ...args);
 
 export function createPeerConnection(
   iceServers: RTCIceServer[],
   onIceCandidate: (candidate: RTCIceCandidate) => void,
   onConnectionStateChange: (state: RTCPeerConnectionState) => void,
   onDataChannel: (channel: RTCDataChannel) => void,
+  onIceCandidateError?: (event: RTCPeerConnectionIceErrorEvent) => void,
 ): RTCPeerConnection {
   log("createPeerConnection: creating with", iceServers.length, "ICE server configs");
-  const pc = new RTCPeerConnection({ iceServers });
+  const pc = new RTCPeerConnection({
+    iceServers,
+    iceCandidatePoolSize: 2,
+    bundlePolicy: "max-bundle",
+  });
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
@@ -22,6 +28,12 @@ export function createPeerConnection(
       log("onicecandidate: ICE gathering complete (null candidate)");
     }
   };
+
+  pc.addEventListener("icecandidateerror", (e) => {
+    const evt = e as RTCPeerConnectionIceErrorEvent;
+    warn(`icecandidateerror: url=${evt.url} errorCode=${evt.errorCode} errorText=${evt.errorText} hostCandidate=${evt.hostCandidate}`);
+    onIceCandidateError?.(evt);
+  });
 
   pc.onconnectionstatechange = () => {
     log("onconnectionstatechange:", pc.connectionState);

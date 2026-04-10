@@ -69,6 +69,21 @@ coturn:
   command: ["--external-ip=YOUR_PUBLIC_IP"]
 ```
 
+### Improving P2P success rate
+
+The web client uses aggressive NAT traversal to establish direct P2P connections. Operators can improve success rates by configuring diverse STUN servers and TURN-TCP alongside the self-hosted STUN/TURN:
+
+```env
+STUN_URLS=stun:your-public-ip:3478,stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun.cloudflare.com:3478
+TURN_URLS=turn:your-public-ip:3478,turn:your-public-ip:3478?transport=tcp
+```
+
+Multiple STUN servers from different providers cause the browser to gather more server-reflexive candidates with potentially different NAT port mappings — this increases the chance of P2P through address-restricted NATs. Adding TURN-TCP provides an alternative relay transport for networks that throttle or block UDP.
+
+**Symmetric NAT**: When a peer is behind a fully symmetric NAT, direct P2P is not possible regardless of STUN configuration. The connection will fall back to TURN relay. This is expected behavior. To improve relay performance, consider using a cloud TURN provider with edge servers closer to users (e.g. Cloudflare TURN, Metered, Twilio).
+
+The client automatically attempts one ICE restart before falling back to relay, and manual retry re-fetches fresh ICE server credentials.
+
 ### Firewall / port forwarding
 
 STUN/TURN traffic is UDP-based and cannot be routed through HTTP reverse proxies like Traefik, Caddy, or nginx. These ports must be forwarded **directly** from the public IP to the host running coturn, bypassing any HTTP proxy.
@@ -124,6 +139,10 @@ When debugging connection issues, filter the browser console by these tags. Key 
 - **Candidates buffered but never flushed** → offer/answer exchange failing
 - **`setRemoteDescription FAILED`** → SDP incompatibility or duplicate offers
 - **`iceConnectionState: failed`** → no working network path between peers (need TURN)
+- **`icecandidateerror`** → STUN/TURN request failed; logged with URL, error code, and error text
+- **`ICE diagnostics`** → dumps all gathered candidates and candidate-pair states on connection failure
+- **`detectRelayType`** → logs the selected candidate pair details (type, protocol, address, port) on success
+- **`ICE restart offer emitted`** → automatic ICE restart was triggered after initial failure
 
 ## Log retention
 

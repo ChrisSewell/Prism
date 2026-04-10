@@ -97,8 +97,11 @@ export function updateUsername(username: string): void {
 }
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: [
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478",
+  ]},
 ];
 
 export async function fetchIceServers(): Promise<RTCIceServer[]> {
