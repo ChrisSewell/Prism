@@ -3,6 +3,18 @@ import { toast } from "sonner";
 import type { PeerState, PeerConnectionState, RelayType, TransferState, RoomState } from "@/lib/types";
 import { getSocket, disconnectSocket, createRoom as sigCreateRoom, joinRoom as sigJoinRoom, fetchIceServers, updateUsername as sigUpdateUsername } from "@/lib/signaling";
 import { createPeerConnection, createDataChannel, sendFile, handleIncomingFrame } from "@/lib/webrtc";
+import {
+  SOCKET_CONNECT_TIMEOUT_MS,
+  PEER_REMOVAL_GRACE_MS,
+  RELAY_DETECT_INITIAL_MS,
+  RELAY_DETECT_FOLLOWUP_MS,
+  RELAY_UPGRADE_INTERVAL_MS,
+  RELAY_UPGRADE_VERIFY_MS,
+  ICE_RESTART_MAX_ATTEMPTS,
+  ICE_RESTART_BACKOFF_MS,
+} from "@/lib/config";
+
+type IceRestartAttempts = { count: number; timer: ReturnType<typeof setTimeout> | null };
 
 const log = (...args: unknown[]) => console.log("[useRoom]", ...args);
 const warn = (...args: unknown[]) => console.warn("[useRoom]", ...args);
@@ -109,8 +121,14 @@ export function useRoom() {
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const pendingCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const remoteDescriptionSetRef = useRef<Set<string>>(new Set());
-  const iceRestartAttemptedRef = useRef<Set<string>>(new Set());
+  const iceRestartAttemptsRef = useRef<Map<string, IceRestartAttempts>>(new Map());
   const upgradeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearIceRestartAttempts = useCallback((peerId: string) => {
+    const a = iceRestartAttemptsRef.current.get(peerId);
+    if (a?.timer) clearTimeout(a.timer);
+    iceRestartAttemptsRef.current.delete(peerId);
+  }, []);
 
   const updatePeerState = useCallback((peerId: string, updates: Partial<PeerState>) => {
     const peer = peersRef.current.get(peerId);
@@ -206,10 +224,10 @@ export function useRoom() {
         log(`onConnectionStateChange(${label}): raw="${state}" mapped="${mapped}"`);
         updatePeerState(peerId, { connectionState: mapped });
         if (mapped === "connected") {
-          iceRestartAttemptedRef.current.delete(peerId);
+          clearIceRestartAttempts(peerId);
           toast.success(`Connected to peer ${getPeerLabel(peerId)}`);
-          checkAndUpdateRelayType(3000, true);
-          checkAndUpdateRelayType(8000, false);
+          checkAndUpdateRelayType(RELAY_DETECT_INITIAL_MS, true);
+          checkAndUpdateRelayType(RELAY_DETECT_FOLLOWUP_MS, false);
         } else if (mapped === "failed") {
           toast.error(`Connection to peer ${getPeerLabel(peerId)} failed`);
         }
@@ -265,29 +283,55 @@ export function useRoom() {
       pc.onicegatheringstatechange = () => {
         log(`iceGatheringState(${label}): ${pc.iceGatheringState}`);
       };
+      const scheduleIceRestart = () => {
+        const existing = iceRestartAttemptsRef.current.get(peerId) ?? { count: 0, timer: null };
+        if (existing.timer) {
+          log(`iceConnectionState(${label}): ICE restart already scheduled, skipping`);
+          return;
+        }
+        if (existing.count >= ICE_RESTART_MAX_ATTEMPTS) {
+          log(`iceConnectionState(${label}): ICE restart budget exhausted (${existing.count}/${ICE_RESTART_MAX_ATTEMPTS}) — manual retry required`);
+          return;
+        }
+        const attemptIndex = existing.count;
+        const delay = ICE_RESTART_BACKOFF_MS[attemptIndex] ?? ICE_RESTART_BACKOFF_MS[ICE_RESTART_BACKOFF_MS.length - 1];
+        const attemptNumber = attemptIndex + 1;
+        log(`iceConnectionState(${label}): scheduling ICE restart attempt ${attemptNumber}/${ICE_RESTART_MAX_ATTEMPTS} in ${delay}ms`);
+        existing.timer = setTimeout(async () => {
+          const entry = iceRestartAttemptsRef.current.get(peerId);
+          if (entry) {
+            entry.timer = null;
+            entry.count = attemptNumber;
+          }
+          if (pc.connectionState === "closed") {
+            log(`iceConnectionState(${label}): peer connection closed before restart fired, aborting`);
+            return;
+          }
+          try {
+            const offer = await pc.createOffer({ iceRestart: true });
+            await pc.setLocalDescription(offer);
+            remoteDescriptionSetRef.current.delete(peerId);
+            pendingCandidatesRef.current.delete(peerId);
+            socket.emit("signal:offer", {
+              toPeerId: peerId,
+              data: { sdp: offer.sdp, type: offer.type },
+            });
+            log(`iceConnectionState(${label}): ICE restart attempt ${attemptNumber}/${ICE_RESTART_MAX_ATTEMPTS} emitted`);
+          } catch (e) {
+            warn(`iceConnectionState(${label}): ICE restart attempt ${attemptNumber}/${ICE_RESTART_MAX_ATTEMPTS} failed`, e);
+          }
+        }, delay);
+        iceRestartAttemptsRef.current.set(peerId, existing);
+      };
+
       pc.oniceconnectionstatechange = () => {
         log(`iceConnectionState(${label}): ${pc.iceConnectionState}`);
         if (pc.iceConnectionState === "failed") {
           logIceDiagnostics(pc, label);
           const selfId = selfPeerIdRef.current!;
           const shouldInitiateRestart = selfId < peerId;
-          if (shouldInitiateRestart && !iceRestartAttemptedRef.current.has(peerId)) {
-            iceRestartAttemptedRef.current.add(peerId);
-            log(`iceConnectionState(${label}): attempting ICE restart (first attempt)`);
-            pc.createOffer({ iceRestart: true }).then(async (offer) => {
-              await pc.setLocalDescription(offer);
-              remoteDescriptionSetRef.current.delete(peerId);
-              pendingCandidatesRef.current.delete(peerId);
-              socket.emit("signal:offer", {
-                toPeerId: peerId,
-                data: { sdp: offer.sdp, type: offer.type },
-              });
-              log(`iceConnectionState(${label}): ICE restart offer emitted`);
-            }).catch((e) => {
-              warn(`iceConnectionState(${label}): ICE restart failed`, e);
-            });
-          } else if (shouldInitiateRestart) {
-            log(`iceConnectionState(${label}): ICE restart already attempted, manual retry needed`);
+          if (shouldInitiateRestart) {
+            scheduleIceRestart();
           }
         }
       };
@@ -360,7 +404,7 @@ export function useRoom() {
         log(`setupPeerConnection(${label}): polite peer, waiting for offer`);
       }
     },
-    [updatePeerState, updateTransfer, getPeerLabel],
+    [updatePeerState, updateTransfer, getPeerLabel, clearIceRestartAttempts],
   );
 
   const setupSignaling = useCallback(() => {
@@ -395,7 +439,7 @@ export function useRoom() {
       toast(`${displayName} left`);
       pendingCandidatesRef.current.delete(peerId);
       remoteDescriptionSetRef.current.delete(peerId);
-      iceRestartAttemptedRef.current.delete(peerId);
+      clearIceRestartAttempts(peerId);
       const peer = peersRef.current.get(peerId);
       if (peer) {
         peer.peerConnection?.close();
@@ -428,7 +472,7 @@ export function useRoom() {
         setTimeout(() => {
           peersRef.current.delete(peerId);
           setRoomState((prev) => ({ ...prev, peers: new Map(peersRef.current) }));
-        }, 3000);
+        }, PEER_REMOVAL_GRACE_MS);
       }
     });
 
@@ -522,7 +566,7 @@ export function useRoom() {
         log(`[socket.onAny] event="${event}"`, JSON.stringify(args).substring(0, 200));
       }
     });
-  }, [setupPeerConnection, flushPendingCandidates, getPeerLabel, updatePeerState]);
+  }, [setupPeerConnection, flushPendingCandidates, getPeerLabel, updatePeerState, clearIceRestartAttempts]);
 
   const create = useCallback(async (pin?: string, username?: string) => {
     log("create: starting, pin=", pin ? "yes" : "no", "username=", username ?? "(none)");
@@ -537,7 +581,7 @@ export function useRoom() {
       }
       
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Connection timeout")), 10000);
+        const timeout = setTimeout(() => reject(new Error("Connection timeout")), SOCKET_CONNECT_TIMEOUT_MS);
         if (socket.connected) { clearTimeout(timeout); log("create: socket already connected"); resolve(); return; }
         socket.once("connect", () => { clearTimeout(timeout); log("create: socket connected via event"); resolve(); });
         socket.once("connect_error", (err) => { clearTimeout(timeout); warn("create: socket connect_error", err.message); reject(err); });
@@ -581,7 +625,7 @@ export function useRoom() {
       }
       
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Connection timeout")), 10000);
+        const timeout = setTimeout(() => reject(new Error("Connection timeout")), SOCKET_CONNECT_TIMEOUT_MS);
         if (socket.connected) { clearTimeout(timeout); log("join: socket already connected"); resolve(); return; }
         socket.once("connect", () => { clearTimeout(timeout); log("join: socket connected via event"); resolve(); });
         socket.once("connect_error", (err) => { clearTimeout(timeout); warn("join: socket connect_error", err.message); reject(err); });
@@ -627,7 +671,10 @@ export function useRoom() {
     abortControllersRef.current.clear();
     pendingCandidatesRef.current.clear();
     remoteDescriptionSetRef.current.clear();
-    iceRestartAttemptedRef.current.clear();
+    for (const entry of iceRestartAttemptsRef.current.values()) {
+      if (entry.timer) clearTimeout(entry.timer);
+    }
+    iceRestartAttemptsRef.current.clear();
     if (upgradeIntervalRef.current) {
       clearInterval(upgradeIntervalRef.current);
       upgradeIntervalRef.current = null;
@@ -713,7 +760,7 @@ export function useRoom() {
       }
       pendingCandidatesRef.current.delete(peerId);
       remoteDescriptionSetRef.current.delete(peerId);
-      iceRestartAttemptedRef.current.delete(peerId);
+      clearIceRestartAttempts(peerId);
       try {
         iceServersRef.current = await fetchIceServers();
         log(`retryPeer(${peerId.substring(0, 6)}): refreshed ICE servers: ${JSON.stringify(iceServersRef.current.map(s => s.urls))}`);
@@ -724,7 +771,7 @@ export function useRoom() {
       const isImpolite = selfId < peerId;
       await setupPeerConnection(peerId, isImpolite);
     },
-    [setupPeerConnection],
+    [setupPeerConnection, clearIceRestartAttempts],
   );
 
   const transfersRef = useRef(transfers);
@@ -786,12 +833,12 @@ export function useRoom() {
             const relayType = await detectRelayType(p.peerConnection);
             log(`upgradeLoop(${peerId.substring(0, 6)}): post-restart relay type = ${relayType}`);
             updatePeerState(peerId, { relayType });
-          }, 5000);
+          }, RELAY_UPGRADE_VERIFY_MS);
         } catch (e) {
           warn(`upgradeLoop(${peerId.substring(0, 6)}): ICE restart failed`, e);
         }
       }
-    }, 30000);
+    }, RELAY_UPGRADE_INTERVAL_MS);
 
     return () => {
       if (upgradeIntervalRef.current) {

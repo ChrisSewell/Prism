@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **Bounded ICE-restart retry**: ICE restart on failure now retries up to 3 times with backoff (0s, 2s, 6s) before falling back to manual retry. Previously a single failed restart left the peer permanently stuck in `"failed"` until the user clicked Retry.
+- **Centralized connection timing**: Relay detection delays, upgrade-loop interval, post-restart verification, socket-connect timeout, and peer-removal grace period are now constants in `apps/web/src/lib/config.ts` instead of inline magic numbers.
+
 ## [1.3.0] - 2026-04-10
 
 ### Added
